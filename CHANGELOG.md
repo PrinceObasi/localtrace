@@ -23,6 +23,9 @@
   USAGE_MAX_SECONDS=...`.
 - The macOS CI smoke check now scans a real temporary directory and verifies
   owner attribution and symlink handling.
+- README restructured around capabilities: a challenge-coverage table, a
+  single configuration table, per-feature sections, and a tiered Future work
+  section.
 - A background storage-health collector adds three probes with independent
   capability state: APFS containers via `diskutil apfs list` (ceiling, free,
   physical stores, per-volume roles, FileVault, lock, seal, and native APFS
