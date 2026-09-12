@@ -138,14 +138,21 @@ common accidental overwrite and symlink cases. They are not a race-free
 sandbox against a hostile process running as the same account; stronger
 hardening would use directory descriptors and no-follow operations throughout.
 
-## Near-term sequence
+## Validation status and near-term sequence
 
-1. Validate real APFS capacity, device-level I/O, and FSEvents behavior on the
+1. **Completed:** real APFS capacity, physical-device I/O, FSEvents evidence,
+   current-user quota probing, and deterministic alerts were validated on the
    demonstration Mac.
-2. Validate current-user quota parsing and NFS metadata on representative local
-   and remote mounts.
-3. Add sustained-I/O and capacity-runway rules alongside the implemented
-   rapid-growth and capacity-pressure rules.
+2. **Completed:** a live loopback NFSv3/TCP mount on macOS 26.2 was discovered,
+   enriched from current `nfsstat` data, displayed in the dashboard, and passed
+   server-read, client-write, backing-export-visibility, and delete checks.
+   The filesystem acceptance check was separate from the observational
+   LocalTrace collector.
+   Because the export used the same Mac, its capacity mirrors the backing APFS
+   storage and is not an independent remote-disk measurement.
+3. **Next:** validate against an independent remote NFS server when one is
+   available, then add sustained-I/O and capacity-runway rules alongside the
+   implemented rapid-growth and capacity-pressure rules.
 4. Preserve recorded fixtures for environments where CI cannot expose a live
    NFS mount, and detect any future macOS pNFS support before making a
    negotiated-data-path claim.

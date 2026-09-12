@@ -60,6 +60,29 @@ quota and not write enforcement.
 > the files and users an administrator should investigate next, while staying
 > completely local to the Mac.
 
+## Recorded live NFS acceptance
+
+The v0.2.1 demonstration build passed a live loopback NFSv3/TCP acceptance on
+macOS 26.2. The dashboard displayed the real mount, server, export, negotiated
+protocol, current mount options, read/write state, kernel warning flags, and
+capability-labeled health and pNFS states. The accompanying read/write check
+was run separately from LocalTrace and produced:
+
+```text
+SERVER_READ=PASS
+CLIENT_WRITE=PASS
+BACKING_EXPORT_VISIBILITY=PASS
+CLIENT_DELETE=PASS
+NFS_READ_WRITE_ACCEPTANCE=PASS
+```
+
+The precise judge-facing description is **live loopback NFSv3/TCP mount
+validation on macOS 26.2**. Do not shorten that to remote-network validation or
+pNFS validation. The capacity shown for this fixture mirrors the same Mac's
+backing APFS storage; it is not an independent server capacity measurement.
+The complete evidence boundary and safe teardown are recorded in
+[`NFS_VALIDATION.md`](NFS_VALIDATION.md).
+
 ## Pre-demo checklist
 
 - [ ] `make setup` succeeds from a fresh checkout.
@@ -76,6 +99,8 @@ quota and not write enforcement.
       the current macOS client, even if an option contains a pNFS-looking name.
 - [ ] Any mounted NFS export is present in the volume list; its `server:/export`
       source was not lost during mount enumeration.
+- [ ] If using the loopback fixture, describe it as loopback NFSv3/TCP and do
+      not present its capacity as an independent remote-disk measurement.
 - [ ] Capacity alerts remain deduplicated across repeated dashboard polls and
       re-arm only at the configured lower recovery boundary.
 - [ ] Unsupported metrics display `Unavailable`, not zero or healthy.
@@ -99,3 +124,8 @@ quota and not write enforcement.
 - Do not calculate or claim an NFSv4 quota utilization percentage from fields
   that macOS reports with remaining-availability semantics.
 - Do not claim an unavailable health signal is healthy.
+- Do not imply that LocalTrace performed the separate NFS read/write check.
+- Do not call the loopback acceptance an off-host, multi-client, NFSv4,
+  performance, security, durability, or failure-recovery test.
+- Do not describe the loopback export's capacity as independent remote
+  storage.

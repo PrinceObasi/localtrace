@@ -63,6 +63,25 @@ System Tools challenge at HackWesTX 2026.
 LocalTrace does not send telemetry to a cloud service and does not substitute
 mock values when a macOS capability is unavailable.
 
+## Live NFS validation
+
+![LocalTrace showing a live loopback NFSv3 mount and its negotiated options](docs/images/localtrace-nfs-live.webp)
+
+LocalTrace v0.2.1 was validated on macOS 26.2 against a live loopback
+NFSv3/TCP mount. The collector discovered the `server:/export` source, parsed
+the negotiated protocol and allowlisted mount options, identified the mount as
+remote and writable, and kept backing-device health and pNFS explicitly
+unavailable. A separate acceptance check read a server marker, wrote through
+the NFS client path, verified the same content through the backing export, and
+deleted the test file successfully.
+
+This validates the macOS NFS client observation and read/write path. It is not
+evidence of independent remote-server health, network performance, or an
+active pNFS data path. The read/write check was separate from LocalTrace;
+LocalTrace remains an observational tool. See
+[`docs/NFS_VALIDATION.md`](docs/NFS_VALIDATION.md) for the recorded result and
+teardown boundary.
+
 ## Quick start
 
 ### Requirements
