@@ -17,6 +17,7 @@ The first slice consists of:
 | Demo workload (`scripts/`) | Produce a bounded, marked `.gguf`-like file using observable chunked writes |
 | Evidence service (`backend/`) | Watch the demo directory plus existing local-AI model directories and any configured extras, retain bounded file events, and raise a deterministic rapid-growth alert |
 | Quota collector (`backend/`) | Parse `/usr/bin/quota -uv` for the process's current account, expose rows with nonzero reported quota fields, and label their filesystem-dependent semantics |
+| Usage scanner (`backend/`) | Rescan watched directories in a bounded background thread and roll up bytes, file counts, and largest files by owning uid |
 | Capacity alert service (`backend/`) | Evaluate each real volume snapshot, retain a single alert per threshold crossing, and re-arm only after an observed recovery |
 
 The dashboard requests `GET /api/v1/dashboard`. During development, Vite
@@ -57,6 +58,16 @@ LocalTrace must label what a metric actually proves:
   be used to derive a used-versus-limit percentage.
   Starred block/file overage evidence and printed grace values remain explicit
   fields rather than being reconstructed from ambiguous numbers.
+- **Per-owner usage** is a scan of the watched directories only. Apparent
+  bytes sum `st_size`; allocated bytes sum `st_blocks * 512` and are an upper
+  bound on APFS because clones and sparse files can share or skip blocks.
+  Symbolic links are never followed, so a Hugging Face snapshot link and its
+  blob count once, and hard links are deduplicated by `(st_dev, st_ino)`
+  within a scan. The scanner stops at a file budget or a time budget and
+  reports the result as `partial` and `truncated` rather than presenting a
+  visited subset as the whole directory. The first snapshot is `warming_up`
+  and neither that nor `unavailable` (no watched directory) degrades the
+  dashboard; only a failed scan does.
 - **Health** is capability-dependent. SMART/NVMe information may not be exposed
   for every Apple or external device. Missing data must never be translated to
   `Healthy`.
@@ -116,7 +127,9 @@ data.
 ## v0.2 request flow
 
 `GET /api/v1/dashboard` gathers the volume, I/O, and quota collectors without
-turning one optional-probe failure into a total response failure. The resulting
+turning one optional-probe failure into a total response failure. The usage
+scanner is not run per request; the dashboard serves its newest completed
+background result so a large scan cannot block one-second polling. The resulting
 volume snapshot is then evaluated by the capacity alert service. File evidence
 and rapid-growth alerts come from the bounded in-memory evidence service. The
 combined response carries the status, source, message, units, and timestamp

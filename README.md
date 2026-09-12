@@ -41,6 +41,10 @@ System Tools challenge at HackWesTX 2026.
 - Reports pNFS as `unavailable` on the current macOS NFS client. It preserves
   visible mount options as evidence, but never treats an option, NFSv4, or
   NFSv4.1 as proof of an active pNFS layout.
+- Scans every watched directory in the background and groups bytes by file
+  owner, so an administrator can see who is consuming model storage even on
+  APFS, which has no per-user quotas. Symlinks are not followed, hard links
+  count once, and a scan that hits its budget is labeled partial.
 - Reads native block and file quotas for the current macOS account through
   `/usr/bin/quota -uv`; only rows with a reportable nonzero limit field are
   displayed, with their filesystem-dependent meaning labeled.
@@ -157,6 +161,23 @@ Additional directories are observed read-only. Only the demo path is created
 if missing, because `make demo` writes there. Nested or duplicate entries are
 skipped as already covered, and symbolic-link directories are refused.
 
+### Per-owner usage
+
+The same watched directories are rescanned in a background thread (every 60
+seconds by default) and rolled up by file owner: bytes, file count, share of
+the scanned total, and each owner's largest files. This is how LocalTrace
+answers "who is filling the model storage?" on APFS, which has no per-user
+quota mechanism. The scan is bounded by a file budget and a time budget so a
+very large Hugging Face cache cannot stall the dashboard:
+
+```bash
+make run USAGE_SCAN_INTERVAL_SECONDS=15 USAGE_MAX_FILES=50000 USAGE_MAX_SECONDS=10
+```
+
+Ownership is the uid on the file at scan time and is evidence for
+investigation, not proof of which process wrote it. Allocated bytes are an
+upper bound on APFS because clones and sparse files can share blocks.
+
 ### Generate visible disk activity
 
 In a second terminal:
@@ -199,6 +220,7 @@ the pNFS and quota claims.
 | `GET /api/v1/health` | Service and platform status |
 | `GET /api/v1/volumes` | Mounted-volume inventory and capacity |
 | `GET /api/v1/quotas` | Native current-user quota visibility |
+| `GET /api/v1/usage` | Per-owner bytes and largest files across watched directories |
 | `GET /api/v1/io` | Physical-device counters and calculated rates |
 | `GET /api/v1/events` | Recent file evidence from every watched directory, with `watch_targets` |
 | `GET /api/v1/alerts` | Deterministic storage alerts |
@@ -250,6 +272,10 @@ application can only estimate:
   timeout.
 - File-event evidence identifies changed paths and file owners. File ownership
   alone is not presented as proof of the process that wrote the file.
+- Per-owner usage covers only the watched directories, never the whole
+  volume. A scan that stops at its file or time budget is `partial` and
+  `truncated`; its totals describe the files visited, not the directory. A
+  missing watched directory is an `error` for that target only.
 
 ## Demonstration story
 
@@ -270,7 +296,8 @@ observational LocalTrace policy, not a native quota or write block.
 ## Roadmap
 
 - Sustained-I/O alert rules
-- Per-owner disk-usage rollups across watched directories
+- Per-owner usage trend history and a "single owner exceeds N% of watched
+  storage" alert rule
 - NFS client RPC metrics and detection for any future macOS pNFS support
 - Quota trend history and optional administrator-selected account visibility
 - SMART and filesystem-health enrichment when supported

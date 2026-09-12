@@ -651,6 +651,16 @@ class FileEvidenceService:
                 items=items,
             )
 
+    def watched_directories(self) -> list[str]:
+        """Directories the observer is actively watching, demo path first."""
+
+        with self._lock:
+            return [
+                target.path
+                for target in self._watch_targets
+                if target.status == WatchTargetStatus.WATCHING
+            ]
+
     def get_alert(self, alert_id: str) -> Alert | None:
         with self._lock:
             return next((alert for alert in self._alerts if alert.id == alert_id), None)

@@ -22,6 +22,7 @@ from localtrace_backend.collectors.quotas import (
     reconcile_quota_semantics,
 )
 from localtrace_backend.collectors.volumes import VolumeCollector
+from localtrace_backend.collectors.usage import DiskUsageScanner
 from localtrace_backend.evidence import FileEvidenceService
 from localtrace_backend.models import (
     Alert,
@@ -33,6 +34,7 @@ from localtrace_backend.models import (
     HealthResponse,
     IOResponse,
     QuotasResponse,
+    UsageResponse,
     ServiceStatus,
     VolumesResponse,
 )
@@ -68,6 +70,7 @@ def create_app(
     evidence_service: FileEvidenceService | None = None,
     quota_collector: QuotaCollector | None = None,
     capacity_alert_service: CapacityAlertService | None = None,
+    usage_scanner: DiskUsageScanner | None = None,
     prime_io: bool = True,
     start_watcher: bool = True,
 ) -> FastAPI:
@@ -76,6 +79,7 @@ def create_app(
     evidence = evidence_service or FileEvidenceService.from_environment()
     quotas_collector = quota_collector or QuotaCollector()
     capacity_alerts = capacity_alert_service or CapacityAlertService.from_environment()
+    usage = usage_scanner or DiskUsageScanner.from_environment(evidence.watched_directories)
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
@@ -95,10 +99,15 @@ def create_app(
             )
         if startup_tasks:
             await asyncio.gather(*startup_tasks)
+        if start_watcher:
+            # The scanner reads the watcher's live target list, so it starts
+            # only after the watcher has resolved which directories exist.
+            application.state.usage_scanner.start()
         try:
             yield
         finally:
             if start_watcher:
+                await run_in_threadpool(application.state.usage_scanner.stop)
                 await run_in_threadpool(application.state.evidence_service.stop)
 
     application = FastAPI(
@@ -114,6 +123,7 @@ def create_app(
     application.state.evidence_service = evidence
     application.state.quota_collector = quotas_collector
     application.state.capacity_alert_service = capacity_alerts
+    application.state.usage_scanner = usage
     application.state.latest_volumes = None
     application.state.latest_io = None
     application.state.latest_quotas = None
@@ -182,6 +192,7 @@ def create_app(
         request.app.state.capacity_alert_service.evaluate(volumes)
         events = request.app.state.evidence_service.events_snapshot()
         alerts = combined_alerts(request)
+        usage = request.app.state.usage_scanner.snapshot()
         return DashboardResponse(
             sampled_at=datetime.now(timezone.utc),
             overall_status=_overall_status(
@@ -195,6 +206,9 @@ def create_app(
                         if quotas.status == CapabilityStatus.ERROR
                         else ()
                     ),
+                    # Like quotas, a warming-up or unavailable usage scan is a
+                    # normal state and must not degrade the whole dashboard.
+                    *((usage.status,) if usage.status == CapabilityStatus.ERROR else ()),
                 )
             ),
             volumes=volumes,
@@ -202,6 +216,7 @@ def create_app(
             events=events,
             alerts=alerts,
             quotas=quotas,
+            usage=usage,
         )
 
     @application.get("/api/v1/health", response_model=HealthResponse)
@@ -211,6 +226,7 @@ def create_app(
         latest_quotas: QuotasResponse | None = request.app.state.latest_quotas
         events = request.app.state.evidence_service.events_snapshot(limit=1)
         alerts = combined_alerts(request, limit=1)
+        usage = request.app.state.usage_scanner.snapshot()
         volume_summary = (
             CapabilitySummary(
                 status=latest_volumes.status,
@@ -260,6 +276,7 @@ def create_app(
                 if quota_summary.status == CapabilityStatus.ERROR
                 else ()
             ),
+            *((usage.status,) if usage.status == CapabilityStatus.ERROR else ()),
         )
         degraded = _overall_status(capability_statuses) != CapabilityStatus.AVAILABLE
         return HealthResponse(
@@ -290,6 +307,11 @@ def create_app(
                     message=alerts.message,
                 ),
                 "quotas": quota_summary,
+                "usage": CapabilitySummary(
+                    status=usage.status,
+                    source=usage.source,
+                    message=usage.message,
+                ),
             },
         )
 
@@ -314,6 +336,10 @@ def create_app(
             result = reconcile_quota_semantics(result, latest_volumes)
         request.app.state.latest_quotas = result
         return result
+
+    @application.get("/api/v1/usage", response_model=UsageResponse)
+    async def usage_route(request: Request) -> UsageResponse:
+        return request.app.state.usage_scanner.snapshot()
 
     @application.get("/api/v1/events", response_model=EventsResponse)
     async def events(

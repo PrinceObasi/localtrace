@@ -8,8 +8,12 @@ import type {
   IoDevice,
   NfsDetails,
   NfsStatusFlag,
+  OwnerUsage,
   QuotaEntry,
   StorageAlert,
+  UsageSnapshot,
+  UsageTarget,
+  UsageTargetStatus,
   Volume,
   WatchTarget,
   WatchTargetRole,
@@ -315,6 +319,74 @@ function normalizeQuota(value: unknown, index: number): QuotaEntry {
   };
 }
 
+const usageTargetStatuses = new Set<UsageTargetStatus>([
+  "scanned",
+  "partial",
+  "error",
+]);
+
+function normalizeUsage(value: unknown): UsageSnapshot {
+  const usage = record(value, "usage");
+  if (!Array.isArray(usage.directories) || !Array.isArray(usage.owners)) {
+    throw new Error("Collector response has invalid usage lists");
+  }
+  const directories: UsageTarget[] = usage.directories.map((item, index) => {
+    const path = `usage.directories[${index}]`;
+    const target = record(item, path);
+    const targetStatus = string(target.status, `${path}.status`);
+    if (!usageTargetStatuses.has(targetStatus as UsageTargetStatus)) {
+      throw new Error(`Collector response has invalid ${path}.status`);
+    }
+    return {
+      path: string(target.path, `${path}.path`),
+      status: targetStatus as UsageTargetStatus,
+      file_count: integer(target.file_count, `${path}.file_count`),
+      apparent_bytes: integer(target.apparent_bytes, `${path}.apparent_bytes`),
+      allocated_bytes: integer(target.allocated_bytes, `${path}.allocated_bytes`),
+      message: nullableString(target.message, `${path}.message`),
+    };
+  });
+  const owners: OwnerUsage[] = usage.owners.map((item, index) => {
+    const path = `usage.owners[${index}]`;
+    const owner = record(item, path);
+    if (!Array.isArray(owner.top_files)) {
+      throw new Error(`Collector response has invalid ${path}.top_files`);
+    }
+    return {
+      uid: integer(owner.uid, `${path}.uid`),
+      owner_name: nullableString(owner.owner_name, `${path}.owner_name`),
+      file_count: integer(owner.file_count, `${path}.file_count`),
+      apparent_bytes: integer(owner.apparent_bytes, `${path}.apparent_bytes`),
+      allocated_bytes: integer(owner.allocated_bytes, `${path}.allocated_bytes`),
+      share_percent: percentage(owner.share_percent, `${path}.share_percent`),
+      top_files: owner.top_files.map((file, fileIndex) => {
+        const filePath = `${path}.top_files[${fileIndex}]`;
+        const entry = record(file, filePath);
+        return {
+          path: string(entry.path, `${filePath}.path`),
+          apparent_bytes: integer(entry.apparent_bytes, `${filePath}.apparent_bytes`),
+          allocated_bytes: integer(entry.allocated_bytes, `${filePath}.allocated_bytes`),
+        };
+      }),
+    };
+  });
+  return {
+    sampled_at: string(usage.sampled_at, "usage.sampled_at"),
+    status: status(usage.status, "usage.status"),
+    source: string(usage.source, "usage.source"),
+    message: nullableString(usage.message, "usage.message"),
+    scan_started_at: nullableString(usage.scan_started_at, "usage.scan_started_at"),
+    scan_duration_seconds: number(usage.scan_duration_seconds, "usage.scan_duration_seconds"),
+    scan_interval_seconds: number(usage.scan_interval_seconds, "usage.scan_interval_seconds"),
+    truncated: boolean(usage.truncated, "usage.truncated"),
+    file_count: integer(usage.file_count, "usage.file_count"),
+    total_apparent_bytes: integer(usage.total_apparent_bytes, "usage.total_apparent_bytes"),
+    total_allocated_bytes: integer(usage.total_allocated_bytes, "usage.total_allocated_bytes"),
+    directories,
+    owners,
+  };
+}
+
 function normalizeWatchTargets(value: unknown, path: string): WatchTarget[] {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) {
@@ -478,6 +550,7 @@ export function normalizeDashboardSnapshot(value: unknown): DashboardSnapshot {
       uid: nullableInteger(quotas.uid, "quotas.uid"),
       items: quotas.items.map(normalizeQuota),
     },
+    usage: normalizeUsage(input.usage),
     io: {
       sampled_at: string(io.sampled_at, "io.sampled_at"),
       status: status(io.status, "io.status"),

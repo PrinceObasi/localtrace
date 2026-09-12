@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
-"""Exercise LocalTrace's real macOS volume, quota, and I/O collector paths."""
+"""Exercise LocalTrace's real macOS volume, quota, I/O, and usage collector paths."""
 
 from __future__ import annotations
 
 from pathlib import Path
+import os
 import platform
+import tempfile
 import time
 
 import psutil
 
 from localtrace_backend.collectors.io import DiskIOSampler
+from localtrace_backend.collectors.usage import DiskUsageScanner
 from localtrace_backend.collectors.quotas import (
     QuotaCollector,
     reconcile_quota_semantics,
@@ -109,13 +112,33 @@ def main() -> int:
             f"I/O sample interval was too short: {second_io.interval_seconds}"
         )
 
+    # The usage scanner must group a real file by its real owner on APFS and
+    # report st_blocks-derived allocation without following symlinks.
+    with tempfile.TemporaryDirectory(prefix="localtrace-smoke-") as scratch:
+        sample = Path(scratch) / "sample.gguf"
+        sample.write_bytes(b"L" * 65_536)
+        (Path(scratch) / "link.gguf").symlink_to(sample)
+        usage = DiskUsageScanner(directories_provider=lambda: [scratch]).scan_now()
+        if usage.status != CapabilityStatus.AVAILABLE:
+            raise RuntimeError(
+                f"usage scan failed: {usage.status.value} {usage.message or ''}".strip()
+            )
+        if usage.file_count != 1 or usage.total_apparent_bytes != 65_536:
+            raise RuntimeError(
+                "usage scan must count the regular file once and skip the symlink: "
+                f"{usage.file_count} file(s), {usage.total_apparent_bytes} bytes"
+            )
+        if not usage.owners or usage.owners[0].uid != os.getuid():
+            raise RuntimeError("usage scan did not attribute the file to the current uid")
+
     print(
         "macOS collector smoke passed: "
         f"{len(second_volumes.items)} volume(s), "
         f"quota={reconciled_quotas.status.value} "
         f"({len(reconciled_quotas.items)} configured), "
         f"{len(second_io.devices)} whole-device counter(s), "
-        f"{second_io.interval_seconds:.3f}s interval"
+        f"{second_io.interval_seconds:.3f}s interval, "
+        f"usage owner={usage.owners[0].owner_name or usage.owners[0].uid}"
     )
     return 0
 

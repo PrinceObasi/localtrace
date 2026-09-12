@@ -188,11 +188,55 @@ export interface AlertsSnapshot {
   items: StorageAlert[];
 }
 
+export type UsageTargetStatus = "scanned" | "partial" | "error";
+
+export interface UsageFile {
+  path: string;
+  apparent_bytes: number;
+  allocated_bytes: number;
+}
+
+export interface OwnerUsage {
+  uid: number;
+  owner_name: string | null;
+  file_count: number;
+  apparent_bytes: number;
+  allocated_bytes: number;
+  share_percent: number;
+  top_files: UsageFile[];
+}
+
+export interface UsageTarget {
+  path: string;
+  status: UsageTargetStatus;
+  file_count: number;
+  apparent_bytes: number;
+  allocated_bytes: number;
+  message: string | null;
+}
+
+export interface UsageSnapshot {
+  sampled_at: string;
+  status: CollectorStatus;
+  source: string;
+  message: string | null;
+  scan_started_at: string | null;
+  scan_duration_seconds: number;
+  scan_interval_seconds: number;
+  truncated: boolean;
+  file_count: number;
+  total_apparent_bytes: number;
+  total_allocated_bytes: number;
+  directories: UsageTarget[];
+  owners: OwnerUsage[];
+}
+
 export interface DashboardSnapshot {
   sampled_at: string;
   overall_status: CollectorStatus;
   volumes: VolumeSnapshot;
   quotas: QuotasSnapshot;
+  usage: UsageSnapshot;
   io: IoSnapshot;
   events: EventsSnapshot;
   alerts: AlertsSnapshot;

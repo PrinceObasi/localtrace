@@ -117,6 +117,9 @@ class AvailableEvidence:
             items=[],
         )
 
+    def watched_directories(self) -> list[str]:
+        return [self.watched_path]
+
     def get_alert(self, _alert_id):
         return None
 
@@ -389,3 +392,65 @@ def test_volume_collection_creates_deduplicated_capacity_alert_and_detail() -> N
     assert alert["available_bytes"] == 50
     assert detail.status_code == 200
     assert detail.json() == alert
+
+
+def test_usage_is_warming_up_until_scanned_and_does_not_degrade_dashboard() -> None:
+    client = TestClient(
+        create_app(
+            volume_collector=FakeVolumes(),  # type: ignore[arg-type]
+            io_sampler=FakeAvailableIO(),  # type: ignore[arg-type]
+            evidence_service=AvailableEvidence(),  # type: ignore[arg-type]
+            quota_collector=FakeQuotas(),  # type: ignore[arg-type]
+            prime_io=False,
+            start_watcher=False,
+        )
+    )
+
+    usage = client.get("/api/v1/usage")
+    assert usage.status_code == 200
+    body = usage.json()
+    assert body["status"] == "warming_up"
+    assert body["owners"] == []
+    assert body["scan_started_at"] is None
+
+    dashboard = client.get("/api/v1/dashboard").json()
+    assert dashboard["usage"]["status"] == "warming_up"
+    assert dashboard["overall_status"] == "available"
+    health = client.get("/api/v1/health").json()
+    assert health["capabilities"]["usage"]["status"] == "warming_up"
+    assert health["status"] == "ok"
+
+
+def test_usage_route_reports_owner_rollup_after_a_scan(tmp_path) -> None:
+    from localtrace_backend.collectors.usage import DiskUsageScanner
+
+    models = tmp_path / "models"
+    models.mkdir()
+    (models / "weights.gguf").write_bytes(b"w" * 2048)
+    scanner = DiskUsageScanner(
+        directories_provider=lambda: [str(models)], owner_name=lambda _uid: "demo"
+    )
+    scanner.scan_now()
+    client = TestClient(
+        create_app(
+            volume_collector=FakeVolumes(),  # type: ignore[arg-type]
+            io_sampler=FakeAvailableIO(),  # type: ignore[arg-type]
+            evidence_service=AvailableEvidence(),  # type: ignore[arg-type]
+            quota_collector=FakeQuotas(),  # type: ignore[arg-type]
+            usage_scanner=scanner,
+            prime_io=False,
+            start_watcher=False,
+        )
+    )
+
+    body = client.get("/api/v1/usage").json()
+
+    assert body["status"] == "available"
+    assert body["file_count"] == 1
+    assert body["total_apparent_bytes"] == 2048
+    assert len(body["owners"]) == 1
+    owner = body["owners"][0]
+    assert owner["owner_name"] == "demo"
+    assert owner["share_percent"] == 100
+    assert owner["top_files"][0]["path"] == str(models / "weights.gguf")
+    assert body["directories"][0]["status"] == "scanned"

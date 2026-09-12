@@ -15,6 +15,14 @@
   role and whether it is `watching`, `skipped`, or `error`, with the reason.
 - The dashboard alerts panel shows how many directories are watched and lists
   every target with its state.
+- A background usage scanner rolls up bytes, file counts, share of the scanned
+  total, and largest files by owning uid across every watched directory,
+  exposed at `GET /api/v1/usage`, in the dashboard response, and in a new
+  **Per-owner usage** panel. Scan cadence and file/time budgets are
+  configurable through `make run USAGE_SCAN_INTERVAL_SECONDS=... USAGE_MAX_FILES=...
+  USAGE_MAX_SECONDS=...`.
+- The macOS CI smoke check now scans a real temporary directory and verifies
+  owner attribution and symlink handling.
 
 ### Accuracy and safety
 
@@ -23,6 +31,9 @@
   error, while a missing explicitly configured path is `partial`.
 - Nested and duplicate targets are skipped as already covered, and
   symbolic-link directories are refused for every target.
+- Usage scans never follow symbolic links, count hard links once, label
+  allocated bytes as an APFS upper bound, and report budget-limited scans as
+  `partial` and `truncated` instead of presenting a visited subset as complete.
 
 ## 0.2.1 — 2026-09-12
 

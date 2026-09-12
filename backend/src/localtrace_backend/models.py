@@ -262,6 +262,59 @@ class ServiceStatus(str, Enum):
     DEGRADED = "degraded"
 
 
+class UsageTargetStatus(str, Enum):
+    SCANNED = "scanned"
+    PARTIAL = "partial"
+    ERROR = "error"
+
+
+class UsageFile(APIModel):
+    path: str
+    apparent_bytes: int = Field(ge=0)
+    allocated_bytes: int = Field(ge=0)
+
+
+class OwnerUsage(APIModel):
+    """Bytes grouped by the owning uid of files in watched directories.
+
+    Ownership at scan time is evidence for investigation; it does not prove
+    which process or person wrote the files.
+    """
+
+    uid: int = Field(ge=0)
+    owner_name: str | None = None
+    file_count: int = Field(ge=0)
+    apparent_bytes: int = Field(ge=0)
+    allocated_bytes: int = Field(ge=0)
+    share_percent: float = Field(ge=0, le=100)
+    top_files: list[UsageFile] = Field(default_factory=list)
+
+
+class UsageTarget(APIModel):
+    path: str
+    status: UsageTargetStatus
+    file_count: int = Field(ge=0)
+    apparent_bytes: int = Field(ge=0)
+    allocated_bytes: int = Field(ge=0)
+    message: str | None = None
+
+
+class UsageResponse(APIModel):
+    sampled_at: datetime
+    status: CapabilityStatus
+    source: str
+    message: str | None = None
+    scan_started_at: datetime | None = None
+    scan_duration_seconds: float = Field(ge=0)
+    scan_interval_seconds: float = Field(gt=0)
+    truncated: bool = False
+    file_count: int = Field(ge=0)
+    total_apparent_bytes: int = Field(ge=0)
+    total_allocated_bytes: int = Field(ge=0)
+    directories: list[UsageTarget] = Field(default_factory=list)
+    owners: list[OwnerUsage] = Field(default_factory=list)
+
+
 class HealthResponse(APIModel):
     service: str
     version: str
@@ -279,3 +332,4 @@ class DashboardResponse(APIModel):
     events: EventsResponse
     alerts: AlertsResponse
     quotas: QuotasResponse
+    usage: UsageResponse

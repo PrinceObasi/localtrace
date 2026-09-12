@@ -1,5 +1,6 @@
 import { AlertsPanel } from "./AlertsPanel";
 import { QuotasPanel } from "./QuotasPanel";
+import { UsagePanel } from "./UsagePanel";
 import { ThroughputChart } from "./ThroughputChart";
 import {
   clampPercent,
@@ -27,7 +28,7 @@ function App() {
     data?.io.status === "available" || data?.io.status === "partial";
   const isStale = connection === "offline" && data !== null;
   const capabilities = data
-    ? [data.volumes, data.io, data.events, data.alerts, data.quotas]
+    ? [data.volumes, data.io, data.events, data.alerts, data.quotas, data.usage]
     : [];
   const erroredCapability =
     capabilities.find((capability) => capability.status === "error") ?? null;
@@ -165,6 +166,12 @@ function App() {
             stale={isStale}
           />
 
+          <UsagePanel
+            usage={data?.usage ?? null}
+            connection={connection}
+            stale={isStale}
+          />
+
           <QuotasPanel
             quotas={data?.quotas ?? null}
             connection={connection}
@@ -265,6 +272,10 @@ function Sidebar({ connection }: { connection: ConnectionState }) {
         <a className="nav-link" href="#alerts">
           <AlertIcon />
           Alerts
+        </a>
+        <a className="nav-link" href="#usage">
+          <UsageIcon />
+          Usage
         </a>
         <a className="nav-link" href="#quotas">
           <QuotaIcon />
@@ -763,6 +774,16 @@ function AlertIcon() {
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 8h18c0-1-3-1-3-8" />
       <path d="M10 20h4" />
+    </svg>
+  );
+}
+
+function UsageIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="8" r="3.5" />
+      <path d="M5 20a7 7 0 0 1 14 0" />
+      <path d="M17 4h4M19 2v4" />
     </svg>
   );
 }

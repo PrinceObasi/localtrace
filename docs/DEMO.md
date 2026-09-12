@@ -17,7 +17,10 @@ Open the dashboard and point out:
 - physical-device read and write throughput;
 - the current account's native quota state;
 - which local-AI model directories are being watched (the alerts panel lists
-  each target as watching or skipped); and
+  each target as watching or skipped);
+- the **Per-owner usage** panel, which shows who owns the bytes in those
+  directories and their largest files—this is the answer to "who is filling
+  the model storage?" on a filesystem with no per-user quotas; and
 - for an NFS mount, the observed server, export, protocol, mount options, and
   evidence-labeled pNFS status.
 
@@ -94,6 +97,10 @@ The complete evidence boundary and safe teardown are recorded in
 - [ ] The alerts panel lists the watched directories; any model directory
       that exists on the demo Mac (for example `~/.ollama/models`) shows
       `Watching`, and missing ones show `Skipped`, not an error.
+- [ ] The usage panel has completed at least one scan before you present
+      (it starts `warming_up`); if you have a large Hugging Face cache, run
+      with `USAGE_MAX_SECONDS=10` and say plainly that a truncated scan is
+      labeled partial.
 - [ ] The I/O chart changes during `make demo`.
 - [ ] One rapid-growth alert appears during `make demo`.
 - [ ] **What changed?** contains evidence related to that alert.
@@ -122,6 +129,9 @@ The complete evidence boundary and safe teardown are recorded in
 - Do not infer pNFS from NFSv4/NFSv4.1, multiple filesystem locations,
   layout-named counters, or pNFS-looking options.
 - Do not call an empty NFS warning-flag list proof that the server is healthy.
+- Do not describe per-owner usage as whole-volume usage; it covers only the
+  watched directories.
+- Do not call the owner of a file the process or person that wrote it.
 - Do not describe current-user quota visibility as multi-user policy
   enforcement.
 - Do not claim an empty successful quota result proves quota support is absent
