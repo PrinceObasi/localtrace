@@ -1,5 +1,9 @@
 # LocalTrace
 
+[![CI](https://github.com/PrinceObasi/localtrace/actions/workflows/ci.yml/badge.svg)](https://github.com/PrinceObasi/localtrace/actions/workflows/ci.yml)
+![Version](https://img.shields.io/badge/version-0.2.1-56d6a0)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 **A flight recorder for local-AI storage workloads on macOS.**
 
 LocalTrace is a local-first administrator dashboard that turns macOS storage
@@ -7,10 +11,25 @@ telemetry into an operational story: what storage is mounted, how quickly data
 is moving, when watched files grow unexpectedly, and what changed when an alert
 was raised.
 
-This project is being built for the Tactical Computing Laboratories macOS File
+This project was built for the Tactical Computing Laboratories macOS File
 System Tools challenge at HackWesTX 2026.
 
-## Current vertical slice (v0.2)
+## Why LocalTrace stands out
+
+- **APFS-aware capacity:** shared-container pressure is calculated once from
+  container-level total and available space instead of double-counting sibling
+  APFS volumes.
+- **Explainable alerts:** rapid model-file growth is linked to the retained
+  filesystem events that triggered it, including size deltas and ownership
+  evidence.
+- **Evidence over guesses:** unavailable SMART, quota, NFS, and pNFS
+  capabilities remain visibly unavailable or partial instead of becoming fake
+  zeroes or healthy states.
+- **Designed around macOS:** collectors use macOS storage interfaces and
+  FSEvents-backed observation while the service remains local-first and does
+  not require privileged system-wide tracing.
+
+## Current vertical slice (v0.2.1)
 
 - Discovers mounted volumes and reports real capacity data.
 - Identifies APFS and NFS mounts when present. NFS rows include the observed
@@ -57,6 +76,16 @@ mock values when a macOS capability is unavailable.
 make setup
 ```
 
+If `python3 --version` is older than 3.11, choose a newer interpreter
+explicitly. For example:
+
+```bash
+make setup PYTHON=python3.12
+
+# Or, from an activated Conda environment using Python 3.11+
+make setup PYTHON=python
+```
+
 ### Run
 
 ```bash
@@ -88,6 +117,8 @@ make demo
 
 The demo writes a file only inside LocalTrace's dedicated temporary demo
 directory. Use `make demo-clean` to remove that generated file.
+See [`docs/DEMO.md`](docs/DEMO.md) for the complete judge-facing walkthrough
+and pre-demo checklist.
 
 ### Test
 
@@ -165,7 +196,7 @@ application can only estimate:
   server-health verdict.
 - Capacity collection still uses the mounted filesystem's `statvfs` path via
   `psutil.disk_usage()`. A stale hard NFS mount can block that kernel call;
-  the v0.2 collector does not claim that this operation has a cancellable
+  the v0.2.x collector does not claim that this operation has a cancellable
   timeout.
 - File-event evidence identifies changed paths and file owners. File ownership
   alone is not presented as proof of the process that wrote the file.
