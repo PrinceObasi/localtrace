@@ -93,12 +93,23 @@ export interface FileEvent {
   source: string;
 }
 
+export type WatchTargetRole = "demo" | "model_directory" | "configured";
+export type WatchTargetStatus = "watching" | "skipped" | "error";
+
+export interface WatchTarget {
+  path: string;
+  role: WatchTargetRole;
+  status: WatchTargetStatus;
+  message: string | null;
+}
+
 export interface EventsSnapshot {
   sampled_at: string;
   status: CollectorStatus;
   source: string;
   message: string | null;
   watched_path: string;
+  watch_targets: WatchTarget[];
   items: FileEvent[];
 }
 
@@ -171,6 +182,7 @@ export interface AlertsSnapshot {
   source: string;
   message: string | null;
   watched_path: string;
+  watch_targets: WatchTarget[];
   threshold_bytes: number;
   capacity_threshold_percent: number;
   items: StorageAlert[];

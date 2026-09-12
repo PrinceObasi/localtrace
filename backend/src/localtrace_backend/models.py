@@ -134,12 +134,39 @@ class FileEvent(APIModel):
     source: str
 
 
+class WatchTargetRole(str, Enum):
+    DEMO = "demo"
+    MODEL_DIRECTORY = "model_directory"
+    CONFIGURED = "configured"
+
+
+class WatchTargetStatus(str, Enum):
+    WATCHING = "watching"
+    SKIPPED = "skipped"
+    ERROR = "error"
+
+
+class WatchTarget(APIModel):
+    """One directory LocalTrace was asked to observe and what happened to it.
+
+    ``skipped`` is a normal state for a well-known model directory that does
+    not exist on this Mac. It is not an error and does not degrade the
+    capability; the message says why the target is not being watched.
+    """
+
+    path: str
+    role: WatchTargetRole
+    status: WatchTargetStatus
+    message: str | None = None
+
+
 class EventsResponse(APIModel):
     sampled_at: datetime
     status: CapabilityStatus
     source: str
     message: str | None = None
     watched_path: str
+    watch_targets: list[WatchTarget] = Field(default_factory=list)
     items: list[FileEvent] = Field(default_factory=list)
 
 
@@ -185,6 +212,7 @@ class AlertsResponse(APIModel):
     source: str
     message: str | None = None
     watched_path: str
+    watch_targets: list[WatchTarget] = Field(default_factory=list)
     threshold_bytes: int = Field(gt=0)
     capacity_threshold_percent: float = Field(default=90, gt=0, le=100)
     items: list[Alert] = Field(default_factory=list)

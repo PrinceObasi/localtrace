@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.3.0 — 2026-09-12
+
+### Added
+
+- The evidence service now watches existing local-AI model directories
+  (Ollama, Hugging Face hub, LM Studio, llama.cpp, Exo) in addition to the
+  demo path, so real workload downloads and conversions feed the same
+  rapid-growth rule.
+- `LOCALTRACE_WATCH_PATHS` (colon-separated) adds administrator-chosen
+  directories; `LOCALTRACE_WATCH_MODEL_DIRS=0` disables the defaults. Both are
+  exposed as `make run WATCH_PATHS=... WATCH_MODEL_DIRS=...`.
+- `watch_targets` on the events and alerts responses reports each directory's
+  role and whether it is `watching`, `skipped`, or `error`, with the reason.
+- The dashboard alerts panel shows how many directories are watched and lists
+  every target with its state.
+
+### Accuracy and safety
+
+- Additional directories are read-only observations and are never created; a
+  missing well-known model directory is a normal `skipped` state, not an
+  error, while a missing explicitly configured path is `partial`.
+- Nested and duplicate targets are skipped as already covered, and
+  symbolic-link directories are refused for every target.
+
 ## 0.2.1 — 2026-09-12
 
 ### Accuracy hotfix

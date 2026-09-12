@@ -6,6 +6,10 @@ VENV_DIR ?= .venv
 VENV_PYTHON := $(VENV_DIR)/bin/python
 TEMP_ROOT ?= $(if $(TMPDIR),$(TMPDIR),/tmp)
 WATCH_PATH ?= $(abspath $(TEMP_ROOT)/localtrace-demo)
+# Colon-separated extra directories to observe read-only (never created).
+WATCH_PATHS ?=
+# Set to 0 to stop watching well-known local-AI model directories.
+WATCH_MODEL_DIRS ?= 1
 DEMO_TARGET ?= $(WATCH_PATH)/localtrace-demo-model.gguf
 DEMO_SIZE_MB ?= 256
 DEMO_CHUNK_MB ?= 4
@@ -28,6 +32,8 @@ help:
 	@echo "  make demo           Write a safe, temporary .gguf-like workload"
 	@echo "  make demo-clean     Remove only the verified demo workload file"
 	@echo "  make run CAPACITY_ALERT_PERCENT=75 CAPACITY_REARM_PERCENT=72"
+	@echo "  make run WATCH_PATHS=/Volumes/Models:~/team-models"
+	@echo "  make run WATCH_MODEL_DIRS=0   Watch only the demo path"
 
 setup: setup-backend setup-frontend
 
@@ -45,6 +51,8 @@ run:
 
 run-backend:
 	LOCALTRACE_WATCH_PATH="$(WATCH_PATH)" \
+	LOCALTRACE_WATCH_PATHS="$(WATCH_PATHS)" \
+	LOCALTRACE_WATCH_MODEL_DIRS="$(WATCH_MODEL_DIRS)" \
 	LOCALTRACE_FILE_GROWTH_ALERT_BYTES="$(FILE_GROWTH_ALERT_BYTES)" \
 	LOCALTRACE_CAPACITY_ALERT_PERCENT="$(CAPACITY_ALERT_PERCENT)" \
 	LOCALTRACE_CAPACITY_REARM_PERCENT="$(CAPACITY_REARM_PERCENT)" \

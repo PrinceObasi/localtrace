@@ -818,6 +818,59 @@ code {
   white-space: nowrap;
 }
 
+.watch-target-list {
+  display: grid;
+  width: 100%;
+  max-width: 560px;
+  margin: 14px 0 0;
+  padding: 0;
+  gap: 6px;
+  list-style: none;
+  text-align: left;
+}
+
+.watch-target {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border: 1px solid rgba(148, 161, 172, 0.18);
+  border-radius: 8px;
+  font-size: 10px;
+}
+
+.watch-target code {
+  overflow: hidden;
+  color: #94a1ac;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.watch-target-role {
+  color: #687580;
+  font-size: 8px;
+  font-weight: 750;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.watch-target-status {
+  font-weight: 700;
+}
+
+.watch-target-watching .watch-target-status {
+  color: #56d6a0;
+}
+
+.watch-target-skipped {
+  opacity: 0.65;
+}
+
+.watch-target-error .watch-target-status {
+  color: #ff7b72;
+}
+
 .alert-count,
 .evidence-count {
   flex: 0 0 auto;

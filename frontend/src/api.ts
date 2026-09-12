@@ -11,6 +11,9 @@ import type {
   QuotaEntry,
   StorageAlert,
   Volume,
+  WatchTarget,
+  WatchTargetRole,
+  WatchTargetStatus,
 } from "./types";
 
 const DASHBOARD_ENDPOINT = "/api/v1/dashboard";
@@ -23,6 +26,17 @@ const statuses = new Set<CollectorStatus>([
   "partial",
   "warming_up",
   "unavailable",
+  "error",
+]);
+
+const watchTargetRoles = new Set<WatchTargetRole>([
+  "demo",
+  "model_directory",
+  "configured",
+]);
+const watchTargetStatuses = new Set<WatchTargetStatus>([
+  "watching",
+  "skipped",
   "error",
 ]);
 
@@ -301,6 +315,30 @@ function normalizeQuota(value: unknown, index: number): QuotaEntry {
   };
 }
 
+function normalizeWatchTargets(value: unknown, path: string): WatchTarget[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) {
+    throw new Error(`Collector response has invalid ${path}`);
+  }
+  return value.map((item, index) => {
+    const target = record(item, `${path}[${index}]`);
+    const role = string(target.role, `${path}[${index}].role`);
+    const targetStatus = string(target.status, `${path}[${index}].status`);
+    if (
+      !watchTargetRoles.has(role as WatchTargetRole) ||
+      !watchTargetStatuses.has(targetStatus as WatchTargetStatus)
+    ) {
+      throw new Error(`Collector response has invalid ${path}[${index}]`);
+    }
+    return {
+      path: string(target.path, `${path}[${index}].path`),
+      role: role as WatchTargetRole,
+      status: targetStatus as WatchTargetStatus,
+      message: nullableString(target.message, `${path}[${index}].message`),
+    };
+  });
+}
+
 function normalizeEvent(value: unknown, index: number): FileEvent {
   const path = `events.items[${index}]`;
   const input = record(value, path);
@@ -455,6 +493,10 @@ export function normalizeDashboardSnapshot(value: unknown): DashboardSnapshot {
       source: string(events.source, "events.source"),
       message: nullableString(events.message, "events.message"),
       watched_path: string(events.watched_path, "events.watched_path"),
+      watch_targets: normalizeWatchTargets(
+        events.watch_targets,
+        "events.watch_targets",
+      ),
       items: events.items.map(normalizeEvent),
     },
     alerts: {
@@ -463,6 +505,10 @@ export function normalizeDashboardSnapshot(value: unknown): DashboardSnapshot {
       source: string(alerts.source, "alerts.source"),
       message: nullableString(alerts.message, "alerts.message"),
       watched_path: string(alerts.watched_path, "alerts.watched_path"),
+      watch_targets: normalizeWatchTargets(
+        alerts.watch_targets,
+        "alerts.watch_targets",
+      ),
       threshold_bytes: integer(
         alerts.threshold_bytes,
         "alerts.threshold_bytes",

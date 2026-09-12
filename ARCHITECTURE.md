@@ -15,7 +15,7 @@ The first slice consists of:
 | Python collector/API (`backend/`) | Read host capabilities and telemetry, normalize results, and expose a loopback-only HTTP API |
 | React/Vite dashboard (`frontend/`) | Poll the API and present administrator-oriented status, metrics, and limitations |
 | Demo workload (`scripts/`) | Produce a bounded, marked `.gguf`-like file using observable chunked writes |
-| Evidence service (`backend/`) | Watch one configured directory, retain bounded file events, and raise a deterministic rapid-growth alert |
+| Evidence service (`backend/`) | Watch the demo directory plus existing local-AI model directories and any configured extras, retain bounded file events, and raise a deterministic rapid-growth alert |
 | Quota collector (`backend/`) | Parse `/usr/bin/quota -uv` for the process's current account, expose rows with nonzero reported quota fields, and label their filesystem-dependent semantics |
 | Capacity alert service (`backend/`) | Evaluate each real volume snapshot, retain a single alert per threshold crossing, and re-arm only after an observed recovery |
 
@@ -35,6 +35,14 @@ LocalTrace must label what a metric actually proves:
 - **File changes** are evidence that a path changed near an event. Ownership of
   the resulting file does not prove which user or process performed the write,
   and temporal correlation does not prove causation.
+- **Watch targets** carry their own state. The demo path is created if
+  missing because the workload writes there. Every other target (a well-known
+  model directory or a `LOCALTRACE_WATCH_PATHS` entry) is read-only and is
+  watched only if it already exists as a real directory. A missing default
+  model directory is `skipped` and does not degrade the capability; a missing
+  or failed *configured* path makes the capability `partial`, because the
+  administrator asked for it explicitly. Nested or duplicate targets are
+  skipped as covered so one change is not recorded twice.
 - **Quota** must identify its source. A native filesystem or NFS quota is
   distinct from a LocalTrace policy threshold; the latter is an alerting budget
   and does not enforce writes. v0.2 queries only the process's current account.

@@ -12,6 +12,7 @@ import type {
   EventsSnapshot,
   FileEvent,
   StorageAlert,
+  WatchTarget,
 } from "./types";
 
 interface AlertsPanelProps {
@@ -73,6 +74,10 @@ export function AlertsPanel({
       );
   }, [events, selectedAlert]);
   const watchedPath = alerts?.watched_path || events?.watched_path || null;
+  const watchTargets =
+    alerts?.watch_targets?.length
+      ? alerts.watch_targets
+      : events?.watch_targets ?? [];
   const available = alerts && capabilityHasData(alerts.status);
 
   return (
@@ -87,10 +92,7 @@ export function AlertsPanel({
         </div>
         <div className="alerts-context">
           {watchedPath && (
-            <div className="watched-path" title={watchedPath}>
-              <span>Watching</span>
-              <code>{watchedPath}</code>
-            </div>
+            <WatchSummary watchedPath={watchedPath} targets={watchTargets} />
           )}
           {alerts && capabilityHasData(alerts.status) && (
             <span className="alert-count">
@@ -111,6 +113,7 @@ export function AlertsPanel({
             {" "}or mounted-volume usage above {alerts.capacity_threshold_percent.toFixed(1)}%.
           </p>
           {watchedPath && <code>{watchedPath}</code>}
+          <WatchTargetList targets={watchTargets} />
         </div>
       ) : (
         <div className="investigation-grid">
@@ -134,6 +137,54 @@ export function AlertsPanel({
         </div>
       )}
     </section>
+  );
+}
+
+const roleLabel: Record<WatchTarget["role"], string> = {
+  demo: "Demo path",
+  model_directory: "Model directory",
+  configured: "Configured",
+};
+
+function WatchSummary({
+  watchedPath,
+  targets,
+}: {
+  watchedPath: string;
+  targets: WatchTarget[];
+}) {
+  const watching = targets.filter((target) => target.status === "watching");
+  const count = Math.max(watching.length, 1);
+  const tooltip =
+    watching.length > 0
+      ? watching.map((target) => `${roleLabel[target.role]}: ${target.path}`).join("\n")
+      : watchedPath;
+  return (
+    <div className="watched-path" title={tooltip}>
+      <span>
+        Watching {count} director{count === 1 ? "y" : "ies"}
+      </span>
+      <code>{watching.length > 1 ? `${watchedPath} +${watching.length - 1}` : watchedPath}</code>
+    </div>
+  );
+}
+
+function WatchTargetList({ targets }: { targets: WatchTarget[] }) {
+  if (targets.length === 0) return null;
+  return (
+    <ul className="watch-target-list" aria-label="Watched directories">
+      {targets.map((target) => (
+        <li
+          key={`${target.role}:${target.path}`}
+          className={`watch-target watch-target-${target.status}`}
+          title={target.message ?? undefined}
+        >
+          <span className="watch-target-role">{roleLabel[target.role]}</span>
+          <code>{target.path}</code>
+          <span className="watch-target-status">{titleCase(target.status)}</span>
+        </li>
+      ))}
+    </ul>
   );
 }
 

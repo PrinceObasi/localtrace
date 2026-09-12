@@ -8,7 +8,7 @@ import tempfile
 import threading
 import uuid
 from collections import OrderedDict, deque
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,6 +22,9 @@ from localtrace_backend.models import (
     FileEvent,
     FileEventKind,
     RapidFileGrowthAlert,
+    WatchTarget,
+    WatchTargetRole,
+    WatchTargetStatus,
 )
 
 try:
@@ -39,6 +42,19 @@ except ImportError:  # pragma: no cover - exercised through dependency injection
 
 DEFAULT_WATCH_PATH = str(Path(tempfile.gettempdir()) / "localtrace-demo")
 DEFAULT_GROWTH_THRESHOLD_BYTES = 64 * 1024 * 1024
+
+# Well-known local-AI model directories on macOS. Each is watched only if it
+# already exists as a real directory; LocalTrace never creates or writes to
+# these locations. A missing entry is a normal ``skipped`` target.
+DEFAULT_MODEL_DIRECTORIES: tuple[str, ...] = (
+    "~/.ollama/models",
+    "~/.cache/huggingface/hub",
+    "~/.lmstudio/models",
+    "~/.cache/lm-studio/models",
+    "~/Library/Caches/llama.cpp",
+    "~/.cache/exo",
+)
+WATCH_PATHS_SEPARATOR = ":"
 MAX_EVENTS = 500
 MAX_ALERTS = 100
 MAX_TRACKED_PATHS = 2_048
@@ -82,6 +98,18 @@ def _metadata(path: str) -> _Metadata | None:
         owner_uid=int(result.st_uid),
         owner_name=_owner_name(int(result.st_uid)),
     )
+
+
+def _normalize_directory(path: str) -> str:
+    return os.path.abspath(os.path.expanduser(path))
+
+
+def _is_within(child: str, parent: str) -> bool:
+    """True when ``child`` equals or sits below ``parent`` (both normalized)."""
+
+    if child == parent:
+        return True
+    return child.startswith(parent.rstrip(os.sep) + os.sep)
 
 
 @dataclass
@@ -129,6 +157,7 @@ class FileEvidenceService:
         self,
         *,
         watched_path: str = DEFAULT_WATCH_PATH,
+        additional_paths: Sequence[tuple[str, WatchTargetRole]] = (),
         threshold_bytes: int = DEFAULT_GROWTH_THRESHOLD_BYTES,
         system_provider: Callable[[], str] = platform.system,
         observer_factory: Any = _DEFAULT_OBSERVER,
@@ -143,7 +172,18 @@ class FileEvidenceService:
         if min(max_events, max_alerts, max_tracked_paths) <= 0:
             raise ValueError("store limits must be positive")
 
-        self.watched_path = os.path.abspath(os.path.expanduser(watched_path))
+        self.watched_path = _normalize_directory(watched_path)
+        self._additional_paths: list[tuple[str, WatchTargetRole]] = [
+            (_normalize_directory(path), role) for path, role in additional_paths
+        ]
+        self._watch_targets: list[WatchTarget] = [
+            WatchTarget(
+                path=self.watched_path,
+                role=WatchTargetRole.DEMO,
+                status=WatchTargetStatus.SKIPPED,
+                message="Watcher has not started.",
+            )
+        ]
         self.threshold_bytes = threshold_bytes
         self.source = (
             "watchdog-fsevents" if system_provider() == "Darwin" else "watchdog"
@@ -161,6 +201,34 @@ class FileEvidenceService:
         self._configuration_message = configuration_message
         self._observer: Any = None
         self._lock = threading.RLock()
+
+    @staticmethod
+    def additional_paths_from_environment(
+        environ: Mapping[str, str] | None = None,
+    ) -> list[tuple[str, WatchTargetRole]]:
+        """Resolve read-only watch targets from the environment.
+
+        ``LOCALTRACE_WATCH_PATHS`` is a colon-separated list of extra
+        directories. ``LOCALTRACE_WATCH_MODEL_DIRS`` defaults to on; set it to
+        ``0``, ``false``, or ``no`` to stop watching the well-known local-AI
+        model directories.
+        """
+
+        env = os.environ if environ is None else environ
+        targets: list[tuple[str, WatchTargetRole]] = []
+        raw_flag = (env.get("LOCALTRACE_WATCH_MODEL_DIRS") or "1").strip().lower()
+        if raw_flag not in {"0", "false", "no", "off"}:
+            targets.extend(
+                (path, WatchTargetRole.MODEL_DIRECTORY)
+                for path in DEFAULT_MODEL_DIRECTORIES
+            )
+        raw_paths = env.get("LOCALTRACE_WATCH_PATHS") or ""
+        targets.extend(
+            (entry.strip(), WatchTargetRole.CONFIGURED)
+            for entry in raw_paths.split(WATCH_PATHS_SEPARATOR)
+            if entry.strip()
+        )
+        return targets
 
     @classmethod
     def from_environment(cls) -> "FileEvidenceService":
@@ -181,12 +249,19 @@ class FileEvidenceService:
                 )
         return cls(
             watched_path=watched_path,
+            additional_paths=cls.additional_paths_from_environment(),
             threshold_bytes=threshold,
             configuration_message=configuration_message,
         )
 
     def start(self) -> None:
-        """Start once; convert every startup failure into capability state."""
+        """Start once; convert every startup failure into capability state.
+
+        The demo path is created if missing because the workload generator
+        writes there. Additional targets are strictly read-only: they are
+        watched only if they already exist as real directories, and a missing
+        well-known model directory is a normal ``skipped`` state.
+        """
 
         with self._lock:
             if self._observer is not None:
@@ -194,6 +269,14 @@ class FileEvidenceService:
             if self._observer_factory is None:
                 self._status = CapabilityStatus.UNAVAILABLE
                 self._message = "The watchdog observer backend is unavailable."
+                self._watch_targets = [
+                    WatchTarget(
+                        path=self.watched_path,
+                        role=WatchTargetRole.DEMO,
+                        status=WatchTargetStatus.SKIPPED,
+                        message=self._message,
+                    )
+                ]
                 return
 
         try:
@@ -207,23 +290,155 @@ class FileEvidenceService:
                 raise NotADirectoryError(f"{self.watched_path} is not a directory")
             observer = self._observer_factory()
             observer.schedule(_WatchHandler(self), self.watched_path, recursive=True)
-            observer.start()
         except Exception as exc:  # observer implementations expose platform-specific errors
             with self._lock:
                 self._status = CapabilityStatus.ERROR
                 self._message = f"File watcher could not start: {_clean_message(exc)}"
+                self._watch_targets = [
+                    WatchTarget(
+                        path=self.watched_path,
+                        role=WatchTargetRole.DEMO,
+                        status=WatchTargetStatus.ERROR,
+                        message=_clean_message(exc),
+                    )
+                ]
             return
+
+        targets = [
+            WatchTarget(
+                path=self.watched_path,
+                role=WatchTargetRole.DEMO,
+                status=WatchTargetStatus.WATCHING,
+                message="Created if missing; the demo workload writes here.",
+            )
+        ]
+        targets.extend(self._schedule_additional(observer))
+
+        try:
+            observer.start()
+        except Exception as exc:
+            with self._lock:
+                self._status = CapabilityStatus.ERROR
+                self._message = f"File watcher could not start: {_clean_message(exc)}"
+                self._watch_targets = [
+                    WatchTarget(
+                        path=target.path,
+                        role=target.role,
+                        status=WatchTargetStatus.ERROR,
+                        message=_clean_message(exc),
+                    )
+                    if target.status == WatchTargetStatus.WATCHING
+                    else target
+                    for target in targets
+                ]
+            return
+
+        watching_paths = [
+            target.path for target in targets if target.status == WatchTargetStatus.WATCHING
+        ]
+        configured_problems = [
+            target
+            for target in targets
+            if target.role == WatchTargetRole.CONFIGURED
+            and target.status != WatchTargetStatus.WATCHING
+            and not any(_is_within(target.path, parent) for parent in watching_paths)
+        ]
+        additional_errors = [
+            target
+            for target in targets
+            if target.role != WatchTargetRole.DEMO
+            and target.status == WatchTargetStatus.ERROR
+        ]
+        watching = sum(1 for target in targets if target.status == WatchTargetStatus.WATCHING)
 
         with self._lock:
             self._observer = observer
+            self._watch_targets = targets
+            messages: list[str] = []
             if self._configuration_message:
+                messages.append(self._configuration_message)
+            if configured_problems:
+                messages.append(
+                    f"{len(configured_problems)} configured watch path(s) are not being "
+                    "watched; see watch_targets."
+                )
+            elif additional_errors:
+                messages.append(
+                    f"{len(additional_errors)} model directory(ies) could not be watched; "
+                    "see watch_targets."
+                )
+            if messages:
                 self._status = CapabilityStatus.PARTIAL
-                self._message = self._configuration_message
+                self._message = " ".join(messages)
             else:
                 self._status = CapabilityStatus.AVAILABLE
                 self._message = (
+                    f"Watching {watching} director{'y' if watching == 1 else 'ies'}. "
                     "Owner fields are file-ownership evidence, not writer identity."
                 )
+
+    def _schedule_additional(self, observer: Any) -> list[WatchTarget]:
+        """Schedule read-only targets, skipping duplicates and nested paths."""
+
+        results: list[WatchTarget] = []
+        scheduled: list[str] = [self.watched_path]
+        for candidate, role in self._additional_paths:
+            covering = next(
+                (parent for parent in scheduled if _is_within(candidate, parent)), None
+            )
+            if covering is not None:
+                results.append(
+                    WatchTarget(
+                        path=candidate,
+                        role=role,
+                        status=WatchTargetStatus.SKIPPED,
+                        message=f"Already covered by {covering}.",
+                    )
+                )
+                continue
+            path = Path(candidate)
+            if path.is_symlink():
+                results.append(
+                    WatchTarget(
+                        path=candidate,
+                        role=role,
+                        status=WatchTargetStatus.SKIPPED,
+                        message="Refusing to watch a symbolic-link directory.",
+                    )
+                )
+                continue
+            if not path.is_dir():
+                results.append(
+                    WatchTarget(
+                        path=candidate,
+                        role=role,
+                        status=WatchTargetStatus.SKIPPED,
+                        message="Directory does not exist; LocalTrace does not create it.",
+                    )
+                )
+                continue
+            try:
+                observer.schedule(_WatchHandler(self), candidate, recursive=True)
+            except Exception as exc:
+                results.append(
+                    WatchTarget(
+                        path=candidate,
+                        role=role,
+                        status=WatchTargetStatus.ERROR,
+                        message=_clean_message(exc),
+                    )
+                )
+                continue
+            scheduled.append(candidate)
+            results.append(
+                WatchTarget(
+                    path=candidate,
+                    role=role,
+                    status=WatchTargetStatus.WATCHING,
+                    message="Read-only observation of an existing directory.",
+                )
+            )
+        return results
 
     def stop(self) -> None:
         with self._lock:
@@ -417,6 +632,7 @@ class FileEvidenceService:
                 source=self.source,
                 message=self._message,
                 watched_path=self.watched_path,
+                watch_targets=list(self._watch_targets),
                 items=items,
             )
 
@@ -430,6 +646,7 @@ class FileEvidenceService:
                 source=self.source,
                 message=self._message,
                 watched_path=self.watched_path,
+                watch_targets=list(self._watch_targets),
                 threshold_bytes=self.threshold_bytes,
                 items=items,
             )

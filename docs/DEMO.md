@@ -15,7 +15,9 @@ Open the dashboard and point out:
 - the actual macOS volume name and filesystem;
 - current used and available capacity;
 - physical-device read and write throughput;
-- the current account's native quota state; and
+- the current account's native quota state;
+- which local-AI model directories are being watched (the alerts panel lists
+  each target as watching or skipped); and
 - for an NFS mount, the observed server, export, protocol, mount options, and
   evidence-labeled pNFS status.
 
@@ -89,6 +91,9 @@ The complete evidence boundary and safe teardown are recorded in
 - [ ] `make test` passes.
 - [ ] `make run` starts both processes.
 - [ ] The dashboard shows the actual startup volume.
+- [ ] The alerts panel lists the watched directories; any model directory
+      that exists on the demo Mac (for example `~/.ollama/models`) shows
+      `Watching`, and missing ones show `Skipped`, not an error.
 - [ ] The I/O chart changes during `make demo`.
 - [ ] One rapid-growth alert appears during `make demo`.
 - [ ] **What changed?** contains evidence related to that alert.

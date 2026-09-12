@@ -1,7 +1,7 @@
 # LocalTrace
 
 [![CI](https://github.com/PrinceObasi/localtrace/actions/workflows/ci.yml/badge.svg)](https://github.com/PrinceObasi/localtrace/actions/workflows/ci.yml)
-![Version](https://img.shields.io/badge/version-0.2.1-56d6a0)
+![Version](https://img.shields.io/badge/version-0.3.0-56d6a0)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 **A flight recorder for local-AI storage workloads on macOS.**
@@ -31,7 +31,7 @@ System Tools challenge at HackWesTX 2026.
   FSEvents-backed observation while the service remains local-first and does
   not require privileged system-wide tracing.
 
-## Current vertical slice (v0.2.1)
+## Current vertical slice (v0.3.0)
 
 - Discovers mounted volumes and reports real capacity data.
 - Identifies APFS and NFS mounts when present. NFS rows include the observed
@@ -45,8 +45,10 @@ System Tools challenge at HackWesTX 2026.
   `/usr/bin/quota -uv`; only rows with a reportable nonzero limit field are
   displayed, with their filesystem-dependent meaning labeled.
 - Samples cumulative physical-device counters and calculates read/write rates.
-- Watches a dedicated path through watchdog/FSEvents and records bounded file
-  change evidence.
+- Watches the local-AI model directories that already exist on the Mac
+  (Ollama, Hugging Face, LM Studio, llama.cpp, Exo) plus a dedicated demo path
+  through watchdog/FSEvents, and records bounded file change evidence. Model
+  directories are observed read-only and are never created.
 - Raises a deduplicated rapid-growth alert when a file crosses the configured
   threshold.
 - Raises one capacity-pressure alert when a mounted volume or shared APFS
@@ -128,6 +130,33 @@ make run FILE_GROWTH_ALERT_BYTES=8388608 \
 These are LocalTrace alert settings. They do not create or enforce filesystem
 quotas.
 
+### Choose what to watch
+
+By default LocalTrace observes the demo path plus every well-known local-AI
+model directory that already exists on the Mac:
+
+| Tool | Directory |
+| --- | --- |
+| Ollama | `~/.ollama/models` |
+| Hugging Face (transformers, MLX, diffusers) | `~/.cache/huggingface/hub` |
+| LM Studio | `~/.lmstudio/models`, `~/.cache/lm-studio/models` |
+| llama.cpp | `~/Library/Caches/llama.cpp` |
+| Exo | `~/.cache/exo` |
+
+A directory that does not exist is reported as `skipped` in `watch_targets`;
+LocalTrace never creates it. Add your own directories (for example an external
+model volume or a shared team folder) as a colon-separated list, or turn the
+defaults off and watch only the demo path:
+
+```bash
+make run WATCH_PATHS=/Volumes/Models:~/team-models
+make run WATCH_MODEL_DIRS=0
+```
+
+Additional directories are observed read-only. Only the demo path is created
+if missing, because `make demo` writes there. Nested or duplicate entries are
+skipped as already covered, and symbolic-link directories are refused.
+
 ### Generate visible disk activity
 
 In a second terminal:
@@ -171,7 +200,7 @@ the pNFS and quota claims.
 | `GET /api/v1/volumes` | Mounted-volume inventory and capacity |
 | `GET /api/v1/quotas` | Native current-user quota visibility |
 | `GET /api/v1/io` | Physical-device counters and calculated rates |
-| `GET /api/v1/events` | Recent watched-path file evidence |
+| `GET /api/v1/events` | Recent file evidence from every watched directory, with `watch_targets` |
 | `GET /api/v1/alerts` | Deterministic storage alerts |
 | `GET /api/v1/alerts/{id}` | One alert with rule-specific evidence |
 | `GET /api/v1/dashboard` | One snapshot optimized for the dashboard |
@@ -241,6 +270,7 @@ observational LocalTrace policy, not a native quota or write block.
 ## Roadmap
 
 - Sustained-I/O alert rules
+- Per-owner disk-usage rollups across watched directories
 - NFS client RPC metrics and detection for any future macOS pNFS support
 - Quota trend history and optional administrator-selected account visibility
 - SMART and filesystem-health enrichment when supported
@@ -252,9 +282,10 @@ observational LocalTrace policy, not a native quota or write block.
   rejects non-loopback Host headers to reduce DNS-rebinding exposure.
 - No authentication or cloud account is required for the hackathon build.
 - Subprocess calls use argument arrays, timeouts, and no shell interpolation.
-- The default watched/demo directory is under the current account's temporary
-  directory. LocalTrace refuses a symbolic link as the watched or immediate
-  demo directory, and the workload file is created exclusively with mode
+- The default demo directory is under the current account's temporary
+  directory. Model directories are watched read-only and are never created;
+  LocalTrace refuses a symbolic link as any watched or immediate demo
+  directory, and the workload file is created exclusively with mode
   `0600` rather than overwriting an existing path. These are accident guards,
   not a race-free sandbox against another hostile process under the same user.
 - Privileged system-wide tracing is not required for the core demonstration.
