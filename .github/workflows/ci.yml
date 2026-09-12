@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tooling:
+    name: Tooling safety tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Test demo safety guards
+        run: python -m unittest discover -s tooling_tests -v
+      - name: Exercise safe demo lifecycle
+        run: |
+          python scripts/demo_workload.py \
+            --target "${RUNNER_TEMP}/localtrace-ci.gguf" \
+            --size-mb 2 --chunk-mb 1 --delay-ms 0 \
+            --fsync-every-chunks 1
+          python scripts/demo_workload.py \
+            --cleanup --target "${RUNNER_TEMP}/localtrace-ci.gguf"
+
+  backend:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+      - name: Install backend
+        run: python -m pip install -e './backend[dev]'
+      - name: Run tests
+        run: python -m pytest backend/tests
+
+  macos-smoke:
+    name: macOS real-collector smoke
+    runs-on: macos-14
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+      - name: Install backend
+        run: python -m pip install -e ./backend
+      - name: Exercise diskutil, volumes, quotas, and I/O
+        run: python scripts/macos_smoke.py
+
+  frontend:
+    name: Frontend build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend
+        run: npm --prefix frontend ci
+      - name: Build frontend
+        run: npm --prefix frontend run build

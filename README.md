@@ -1,0 +1,212 @@
+# LocalTrace
+
+**A flight recorder for local-AI storage workloads on macOS.**
+
+LocalTrace is a local-first administrator dashboard that turns macOS storage
+telemetry into an operational story: what storage is mounted, how quickly data
+is moving, when watched files grow unexpectedly, and what changed when an alert
+was raised.
+
+This project is being built for the Tactical Computing Laboratories macOS File
+System Tools challenge at HackWesTX 2026.
+
+## Current vertical slice (v0.2)
+
+- Discovers mounted volumes and reports real capacity data.
+- Identifies APFS and NFS mounts when present. NFS rows include the observed
+  server, export, protocol version, and a safe allowlist of current mount
+  options and warning flags from structured `nfsstat` data, with the mount
+  record as fallback.
+- Reports pNFS as `unavailable` on the current macOS NFS client. It preserves
+  visible mount options as evidence, but never treats an option, NFSv4, or
+  NFSv4.1 as proof of an active pNFS layout.
+- Reads native block and file quotas for the current macOS account through
+  `/usr/bin/quota -uv`; only rows with a reportable nonzero limit field are
+  displayed, with their filesystem-dependent meaning labeled.
+- Samples cumulative physical-device counters and calculates read/write rates.
+- Watches a dedicated path through watchdog/FSEvents and records bounded file
+  change evidence.
+- Raises a deduplicated rapid-growth alert when a file crosses the configured
+  threshold.
+- Raises one capacity-pressure alert when a mounted volume or shared APFS
+  container crosses the configured percentage, suppresses repeats while it
+  stays high, and re-arms only after a real sample reaches the lower recovery
+  boundary.
+- Correlates a rapid-growth alert with its retained events in a
+  **What changed?** view.
+- Serves a versioned local FastAPI API.
+- Displays live data in a local React administrator dashboard.
+- Represents partial, unavailable, and warming-up metrics explicitly.
+- Includes a deterministic local workload generator for demonstrations.
+
+LocalTrace does not send telemetry to a cloud service and does not substitute
+mock values when a macOS capability is unavailable.
+
+## Quick start
+
+### Requirements
+
+- macOS 13 or newer
+- Python 3.11 or newer
+- Node.js 20 or newer
+- `make`
+
+### Install
+
+```bash
+make setup
+```
+
+### Run
+
+```bash
+make run
+```
+
+Then open <http://localhost:5173>. The API is available at
+<http://localhost:8000/api/v1/health>.
+
+The default rapid-growth threshold is 64 MiB. Capacity warns at 90% and re-arms
+at 88%, a two-percentage-point hysteresis that prevents alert chatter. These
+values can be changed for a transparent demonstration:
+
+```bash
+make run FILE_GROWTH_ALERT_BYTES=8388608 \
+  CAPACITY_ALERT_PERCENT=75 CAPACITY_REARM_PERCENT=72
+```
+
+These are LocalTrace alert settings. They do not create or enforce filesystem
+quotas.
+
+### Generate visible disk activity
+
+In a second terminal:
+
+```bash
+make demo
+```
+
+The demo writes a file only inside LocalTrace's dedicated temporary demo
+directory. Use `make demo-clean` to remove that generated file.
+
+### Test
+
+```bash
+make test
+```
+
+## Architecture
+
+```mermaid
+flowchart LR
+    A["macOS storage sources"] --> B["Python collectors"]
+    B --> C["FastAPI local API"]
+    C --> D["React admin dashboard"]
+    B --> E["Capability status"]
+```
+
+The initial collectors use stable structured interfaces where macOS provides
+them and isolate platform-specific behavior behind providers. See
+[`ARCHITECTURE.md`](ARCHITECTURE.md) for the data contract and accuracy rules,
+and [`docs/SOURCES.md`](docs/SOURCES.md) for the Apple platform evidence behind
+the pNFS and quota claims.
+
+## API
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /api/v1/health` | Service and platform status |
+| `GET /api/v1/volumes` | Mounted-volume inventory and capacity |
+| `GET /api/v1/quotas` | Native current-user quota visibility |
+| `GET /api/v1/io` | Physical-device counters and calculated rates |
+| `GET /api/v1/events` | Recent watched-path file evidence |
+| `GET /api/v1/alerts` | Deterministic storage alerts |
+| `GET /api/v1/alerts/{id}` | One alert with rule-specific evidence |
+| `GET /api/v1/dashboard` | One snapshot optimized for the dashboard |
+
+Interactive API documentation is available at <http://localhost:8000/docs>
+while the backend is running.
+
+## Metric accuracy
+
+LocalTrace intentionally distinguishes what macOS proves from what an
+application can only estimate:
+
+- Device I/O counters describe physical devices; they are not labeled as
+  per-volume traffic.
+- APFS volumes may share free space inside one container, so their capacities
+  must not be added together as if they were independent disks. Capacity
+  alerts derive shared-container use as total minus available space while the
+  volume inventory preserves macOS's raw per-volume allocation values.
+- A missing quota command or unsupported platform is reported as
+  `unavailable`, never as a zero quota. A successful probe with no reportable
+  nonzero current-user record is `available` with an empty list.
+- Missing SMART data is reported as `unavailable`, never `healthy`.
+- A native quota row is shown only when macOS reports a nonzero block or file
+  soft/hard limit for the current account. LocalTrace observes those limits; it
+  does not enforce them. An empty result does not prove the filesystem lacks
+  quota support.
+- APFS quota limits are labeled as absolute limits. LocalTrace joins a quota
+  row to the exact mounted-volume path and uses the currently negotiated NFS
+  version to label macOS NFSv4 fields as remaining availability. It does not
+  calculate a misleading used-versus-limit percentage from them. If no exact
+  current mount/version observation exists, the semantics remain `unknown`.
+- The current macOS NFS client does not support pNFS, so LocalTrace reports it
+  as `unavailable`. Protocol versions and pNFS-looking mount options remain raw
+  observations, not proof that a layout was negotiated.
+- NFS enrichment reads each mount's current structured `nfsstat` parameters,
+  not the originally requested options, and does not retain filehandles,
+  principals, realms, or raw JSON.
+- Mount discovery reads the complete macOS mount table and then filters known
+  pseudo-filesystems itself. This preserves ordinary NFS sources such as
+  `server:/export`, which macOS `psutil.disk_partitions(all=False)` omits.
+- Only `dead`, `not responding`, and `recovery` NFS warning flags are exposed.
+  An empty flag list means no kernel warning flag was observed; it is not a
+  server-health verdict.
+- Capacity collection still uses the mounted filesystem's `statvfs` path via
+  `psutil.disk_usage()`. A stale hard NFS mount can block that kernel call;
+  the v0.2 collector does not claim that this operation has a cancellable
+  timeout.
+- File-event evidence identifies changed paths and file owners. File ownership
+  alone is not presented as proof of the process that wrote the file.
+
+## Demonstration story
+
+The target judge-facing sequence is:
+
+1. Open LocalTrace and show the real Mac's mounted storage, NFS metadata when
+   present, capacity, and native current-user quota state.
+2. Start a local AI-style model write with `make demo`.
+3. Watch physical-device throughput rise in the live chart.
+4. Raise a deterministic rapid-growth alert.
+5. Open **What changed?** to identify the affected path, size delta, and file
+   owner.
+
+All five steps are implemented in the current vertical slice. If you also show
+a capacity alert, state the configured threshold plainly; the alert is an
+observational LocalTrace policy, not a native quota or write block.
+
+## Roadmap
+
+- Sustained-I/O alert rules
+- NFS client RPC metrics and detection for any future macOS pNFS support
+- Quota trend history and optional administrator-selected account visibility
+- SMART and filesystem-health enrichment when supported
+- Capacity-runway estimates and retained local history
+
+## Security and privacy
+
+- The API and dashboard bind to loopback interfaces by default, and the API
+  rejects non-loopback Host headers to reduce DNS-rebinding exposure.
+- No authentication or cloud account is required for the hackathon build.
+- Subprocess calls use argument arrays, timeouts, and no shell interpolation.
+- The default watched/demo directory is under the current account's temporary
+  directory. LocalTrace refuses a symbolic link as the watched or immediate
+  demo directory, and the workload file is created exclusively with mode
+  `0600` rather than overwriting an existing path. These are accident guards,
+  not a race-free sandbox against another hostile process under the same user.
+- Privileged system-wide tracing is not required for the core demonstration.
+
+## License
+
+[MIT](LICENSE)

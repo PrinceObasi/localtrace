@@ -1,0 +1,43 @@
+# macOS
+.DS_Store
+.AppleDouble
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# JavaScript / Vite
+node_modules/
+frontend/dist/
+frontend/.vite/
+*.tsbuildinfo
+
+# Local configuration and runtime state
+.env
+.env.*
+!.env.example
+.localtrace/
+*.db
+*.sqlite
+*.sqlite3
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*~
+
+
+# Generated build outputs
+build/
+
+# Generated demo workloads
+*.gguf

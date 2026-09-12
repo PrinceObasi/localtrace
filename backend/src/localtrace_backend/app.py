@@ -1,0 +1,354 @@
+"""FastAPI application for the LocalTrace local telemetry service."""
+
+from __future__ import annotations
+
+import asyncio
+import platform
+from collections.abc import AsyncIterator, Sequence
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+
+import uvicorn
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
+from starlette.concurrency import run_in_threadpool
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+
+from localtrace_backend import __version__
+from localtrace_backend.capacity_alerts import CapacityAlertService
+from localtrace_backend.collectors.io import DiskIOSampler
+from localtrace_backend.collectors.quotas import (
+    QuotaCollector,
+    reconcile_quota_semantics,
+)
+from localtrace_backend.collectors.volumes import VolumeCollector
+from localtrace_backend.evidence import FileEvidenceService
+from localtrace_backend.models import (
+    Alert,
+    AlertsResponse,
+    CapabilityStatus,
+    CapabilitySummary,
+    DashboardResponse,
+    EventsResponse,
+    HealthResponse,
+    IOResponse,
+    QuotasResponse,
+    ServiceStatus,
+    VolumesResponse,
+)
+
+
+LOCAL_DEV_ORIGINS = (
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://[::1]:5173",
+    "http://localhost:4173",
+    "http://127.0.0.1:4173",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+)
+
+
+def _overall_status(statuses: Sequence[CapabilityStatus]) -> CapabilityStatus:
+    if statuses and all(status == CapabilityStatus.AVAILABLE for status in statuses):
+        return CapabilityStatus.AVAILABLE
+    if statuses and all(status == CapabilityStatus.ERROR for status in statuses):
+        return CapabilityStatus.ERROR
+    if statuses and all(status == CapabilityStatus.UNAVAILABLE for status in statuses):
+        return CapabilityStatus.UNAVAILABLE
+    if statuses and all(status == CapabilityStatus.WARMING_UP for status in statuses):
+        return CapabilityStatus.WARMING_UP
+    return CapabilityStatus.PARTIAL
+
+
+def create_app(
+    *,
+    volume_collector: VolumeCollector | None = None,
+    io_sampler: DiskIOSampler | None = None,
+    evidence_service: FileEvidenceService | None = None,
+    quota_collector: QuotaCollector | None = None,
+    capacity_alert_service: CapacityAlertService | None = None,
+    prime_io: bool = True,
+    start_watcher: bool = True,
+) -> FastAPI:
+    collector = volume_collector or VolumeCollector()
+    sampler = io_sampler or DiskIOSampler()
+    evidence = evidence_service or FileEvidenceService.from_environment()
+    quotas_collector = quota_collector or QuotaCollector()
+    capacity_alerts = capacity_alert_service or CapacityAlertService.from_environment()
+
+    @asynccontextmanager
+    async def lifespan(application: FastAPI) -> AsyncIterator[None]:
+        startup_tasks = []
+        if prime_io:
+            # Establish a cumulative-counter baseline without delaying import or
+            # pretending that a zero first sample is a measured zero rate.
+            async def prime_disk_io() -> None:
+                application.state.latest_io = await run_in_threadpool(
+                    application.state.io_sampler.sample
+                )
+
+            startup_tasks.append(prime_disk_io())
+        if start_watcher:
+            startup_tasks.append(
+                run_in_threadpool(application.state.evidence_service.start)
+            )
+        if startup_tasks:
+            await asyncio.gather(*startup_tasks)
+        try:
+            yield
+        finally:
+            if start_watcher:
+                await run_in_threadpool(application.state.evidence_service.stop)
+
+    application = FastAPI(
+        title="LocalTrace API",
+        summary="Local-first macOS storage telemetry",
+        version=__version__,
+        lifespan=lifespan,
+        docs_url="/docs",
+        redoc_url=None,
+    )
+    application.state.volume_collector = collector
+    application.state.io_sampler = sampler
+    application.state.evidence_service = evidence
+    application.state.quota_collector = quotas_collector
+    application.state.capacity_alert_service = capacity_alerts
+    application.state.latest_volumes = None
+    application.state.latest_io = None
+    application.state.latest_quotas = None
+
+    # Loopback binding is the primary boundary. Host validation also prevents
+    # a browser from reading local telemetry through a DNS-rebinding hostname.
+    application.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=["127.0.0.1", "localhost", "testserver"],
+        www_redirect=False,
+    )
+    application.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(LOCAL_DEV_ORIGINS),
+        allow_credentials=False,
+        allow_methods=["GET"],
+        allow_headers=["Accept", "Content-Type"],
+        max_age=600,
+    )
+
+    @application.middleware("http")
+    async def disable_telemetry_caching(request: Request, call_next):  # type: ignore[no-untyped-def]
+        response = await call_next(request)
+        if request.url.path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-store"
+        return response
+
+    def combined_alerts(request: Request, limit: int = 100) -> AlertsResponse:
+        evidence_alerts = request.app.state.evidence_service.alerts_snapshot(limit)
+        capacity_status, capacity_message, capacity_items = (
+            request.app.state.capacity_alert_service.snapshot(limit)
+        )
+        items = sorted(
+            [*evidence_alerts.items, *capacity_items],
+            key=lambda item: item.occurred_at,
+            reverse=True,
+        )[:limit]
+        messages = [
+            message
+            for message in (evidence_alerts.message, capacity_message)
+            if message
+        ]
+        return AlertsResponse(
+            sampled_at=datetime.now(timezone.utc),
+            status=_overall_status((evidence_alerts.status, capacity_status)),
+            source=f"{evidence_alerts.source}+{request.app.state.capacity_alert_service.source}",
+            message=" ".join(dict.fromkeys(messages)) or None,
+            watched_path=evidence_alerts.watched_path,
+            threshold_bytes=evidence_alerts.threshold_bytes,
+            capacity_threshold_percent=(
+                request.app.state.capacity_alert_service.threshold_percent
+            ),
+            items=items,
+        )
+
+    async def collect_dashboard(request: Request) -> DashboardResponse:
+        volumes, io, quotas = await asyncio.gather(
+            run_in_threadpool(request.app.state.volume_collector.collect),
+            run_in_threadpool(request.app.state.io_sampler.sample),
+            run_in_threadpool(request.app.state.quota_collector.collect),
+        )
+        quotas = reconcile_quota_semantics(quotas, volumes)
+        request.app.state.latest_volumes = volumes
+        request.app.state.latest_io = io
+        request.app.state.latest_quotas = quotas
+        request.app.state.capacity_alert_service.evaluate(volumes)
+        events = request.app.state.evidence_service.events_snapshot()
+        alerts = combined_alerts(request)
+        return DashboardResponse(
+            sampled_at=datetime.now(timezone.utc),
+            overall_status=_overall_status(
+                (
+                    volumes.status,
+                    io.status,
+                    events.status,
+                    alerts.status,
+                    *(
+                        (quotas.status,)
+                        if quotas.status == CapabilityStatus.ERROR
+                        else ()
+                    ),
+                )
+            ),
+            volumes=volumes,
+            io=io,
+            events=events,
+            alerts=alerts,
+            quotas=quotas,
+        )
+
+    @application.get("/api/v1/health", response_model=HealthResponse)
+    async def health(request: Request) -> HealthResponse:
+        latest_volumes: VolumesResponse | None = request.app.state.latest_volumes
+        latest_io: IOResponse | None = request.app.state.latest_io
+        latest_quotas: QuotasResponse | None = request.app.state.latest_quotas
+        events = request.app.state.evidence_service.events_snapshot(limit=1)
+        alerts = combined_alerts(request, limit=1)
+        volume_summary = (
+            CapabilitySummary(
+                status=latest_volumes.status,
+                source=latest_volumes.source,
+                message=latest_volumes.message,
+            )
+            if latest_volumes
+            else CapabilitySummary(
+                status=CapabilityStatus.WARMING_UP,
+                source="not-sampled",
+                message="Volume telemetry has not been sampled yet.",
+            )
+        )
+        io_summary = (
+            CapabilitySummary(
+                status=latest_io.status,
+                source=latest_io.source,
+                message=latest_io.message,
+            )
+            if latest_io
+            else CapabilitySummary(
+                status=CapabilityStatus.WARMING_UP,
+                source="not-sampled",
+                message="Disk I/O telemetry has not been sampled yet.",
+            )
+        )
+        quota_summary = (
+            CapabilitySummary(
+                status=latest_quotas.status,
+                source=latest_quotas.source,
+                message=latest_quotas.message,
+            )
+            if latest_quotas
+            else CapabilitySummary(
+                status=CapabilityStatus.WARMING_UP,
+                source="not-sampled",
+                message="Quota telemetry has not been sampled yet.",
+            )
+        )
+        capability_statuses = (
+            volume_summary.status,
+            io_summary.status,
+            events.status,
+            alerts.status,
+            *(
+                (quota_summary.status,)
+                if quota_summary.status == CapabilityStatus.ERROR
+                else ()
+            ),
+        )
+        degraded = _overall_status(capability_statuses) != CapabilityStatus.AVAILABLE
+        return HealthResponse(
+            service="localtrace-api",
+            version=__version__,
+            status=ServiceStatus.DEGRADED if degraded else ServiceStatus.OK,
+            sampled_at=datetime.now(timezone.utc),
+            platform=platform.platform(),
+            capabilities={
+                "volumes": CapabilitySummary(
+                    status=volume_summary.status,
+                    source=volume_summary.source,
+                    message=volume_summary.message,
+                ),
+                "disk_io": CapabilitySummary(
+                    status=io_summary.status,
+                    source=io_summary.source,
+                    message=io_summary.message,
+                ),
+                "file_events": CapabilitySummary(
+                    status=events.status,
+                    source=events.source,
+                    message=events.message,
+                ),
+                "alerts": CapabilitySummary(
+                    status=alerts.status,
+                    source=alerts.source,
+                    message=alerts.message,
+                ),
+                "quotas": quota_summary,
+            },
+        )
+
+    @application.get("/api/v1/volumes", response_model=VolumesResponse)
+    async def volumes(request: Request) -> VolumesResponse:
+        result = await run_in_threadpool(request.app.state.volume_collector.collect)
+        request.app.state.latest_volumes = result
+        request.app.state.capacity_alert_service.evaluate(result)
+        return result
+
+    @application.get("/api/v1/io", response_model=IOResponse)
+    async def disk_io(request: Request) -> IOResponse:
+        result = await run_in_threadpool(request.app.state.io_sampler.sample)
+        request.app.state.latest_io = result
+        return result
+
+    @application.get("/api/v1/quotas", response_model=QuotasResponse)
+    async def quotas(request: Request) -> QuotasResponse:
+        result = await run_in_threadpool(request.app.state.quota_collector.collect)
+        latest_volumes: VolumesResponse | None = request.app.state.latest_volumes
+        if latest_volumes is not None:
+            result = reconcile_quota_semantics(result, latest_volumes)
+        request.app.state.latest_quotas = result
+        return result
+
+    @application.get("/api/v1/events", response_model=EventsResponse)
+    async def events(
+        request: Request,
+        limit: int = Query(default=100, ge=1, le=500),
+    ) -> EventsResponse:
+        return request.app.state.evidence_service.events_snapshot(limit)
+
+    @application.get("/api/v1/alerts", response_model=AlertsResponse)
+    async def alerts(
+        request: Request,
+        limit: int = Query(default=100, ge=1, le=100),
+    ) -> AlertsResponse:
+        return combined_alerts(request, limit)
+
+    @application.get("/api/v1/alerts/{alert_id}", response_model=Alert)
+    async def alert_detail(request: Request, alert_id: str) -> Alert:
+        alert = request.app.state.evidence_service.get_alert(alert_id)
+        if alert is None:
+            alert = request.app.state.capacity_alert_service.get_alert(alert_id)
+        if alert is None:
+            raise HTTPException(status_code=404, detail="Alert not found")
+        return alert
+
+    @application.get("/api/v1/dashboard", response_model=DashboardResponse)
+    async def dashboard(request: Request) -> DashboardResponse:
+        return await collect_dashboard(request)
+
+    return application
+
+
+app = create_app()
+
+
+def run() -> None:
+    """Run the loopback-only development server."""
+
+    uvicorn.run("localtrace_backend.app:app", host="127.0.0.1", port=8000)

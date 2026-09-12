@@ -1,0 +1,151 @@
+# LocalTrace Architecture
+
+## Current phase
+
+LocalTrace is in its hackathon MVP phase: prove trustworthy, end-to-end macOS
+storage-monitoring paths before broadening protocol coverage. The v0.2
+demonstration makes a local storage workload visible as capacity and I/O
+telemetry, shows native current-user quota state and observed NFS metadata, and
+raises explainable rapid-growth and capacity-pressure alerts.
+
+The first slice consists of:
+
+| Component | Responsibility |
+| --- | --- |
+| Python collector/API (`backend/`) | Read host capabilities and telemetry, normalize results, and expose a loopback-only HTTP API |
+| React/Vite dashboard (`frontend/`) | Poll the API and present administrator-oriented status, metrics, and limitations |
+| Demo workload (`scripts/`) | Produce a bounded, marked `.gguf`-like file using observable chunked writes |
+| Evidence service (`backend/`) | Watch one configured directory, retain bounded file events, and raise a deterministic rapid-growth alert |
+| Quota collector (`backend/`) | Parse `/usr/bin/quota -uv` for the process's current account, expose rows with nonzero reported quota fields, and label their filesystem-dependent semantics |
+| Capacity alert service (`backend/`) | Evaluate each real volume snapshot, retain a single alert per threshold crossing, and re-arm only after an observed recovery |
+
+The dashboard requests `GET /api/v1/dashboard`. During development, Vite
+proxies `/api` to the backend on `127.0.0.1:8000`. No cloud service is required.
+
+## Metric semantics
+
+LocalTrace must label what a metric actually proves:
+
+- **Capacity** is reported by a mounted filesystem. APFS volumes can share an
+  APFS container, so a volume's available space is not an isolated physical
+  allocation.
+- **I/O throughput** is a rate derived from differences between cumulative
+  device counters over a measured interval. A physical-device counter is not
+  automatically attributable to one APFS volume, process, user, or file.
+- **File changes** are evidence that a path changed near an event. Ownership of
+  the resulting file does not prove which user or process performed the write,
+  and temporal correlation does not prove causation.
+- **Quota** must identify its source. A native filesystem or NFS quota is
+  distinct from a LocalTrace policy threshold; the latter is an alerting budget
+  and does not enforce writes. v0.2 queries only the process's current account.
+  A row without any nonzero limit is not emitted as a configured quota, and
+  LocalTrace does not use that empty observation to infer whether the
+  filesystem supports or has disabled quota policy. Each emitted row carries
+  `limit_semantics`: APFS values are `absolute_limit`; macOS NFSv4 values are
+  `remaining_availability`; and unverified filesystem meanings are `unknown`.
+  Because macOS may label an NFSv4 mount only as `nfs`, the aggregated
+  dashboard reconciles the quota row's exact normalized mount path with the
+  volume collector's current negotiated NFS version. Only absolute limits may
+  be used to derive a used-versus-limit percentage.
+  Starred block/file overage evidence and printed grace values remain explicit
+  fields rather than being reconstructed from ambiguous numbers.
+- **Health** is capability-dependent. SMART/NVMe information may not be exposed
+  for every Apple or external device. Missing data must never be translated to
+  `Healthy`.
+- **NFS/pNFS** support must distinguish observed live mount metadata, parsed
+  test fixtures, and planned support. LocalTrace extracts the server, export,
+  protocol version, and allowlisted current mount options from
+  `/usr/bin/nfsstat -v -f JSON -m <mountpoint>`, falling back to the mount
+  record when enrichment is unavailable. It requests the complete mount table
+  and filters known pseudo-filesystem types itself, because psutil's macOS
+  `all=False` behavior drops NFS sources such as `server:/export`. Raw JSON,
+  filehandles, principals, and realms are discarded. Only the `dead`, `not
+  responding`, and `recovery`
+  status flags are exposed; an empty list means no kernel warning flag was
+  observed, not that the remote server is healthy. The current macOS NFS client
+  is built without pNFS support, so v0.2 reports pNFS as `unavailable` on
+  macOS. An NFSv4/NFSv4.1 label, multiple filesystem locations, a layout-named
+  counter, or a pNFS-looking option does not demonstrate an active pNFS data
+  path.
+- **Stale remote mounts** remain an operating-system boundary. Capacity reads
+  call `statvfs` through `psutil.disk_usage()` and a stale hard NFS mount can
+  block inside that kernel call. A Python thread timeout would only abandon a
+  worker while leaving it blocked, so v0.2 documents this limitation rather
+  than presenting the call as cancellable.
+- **Capacity pressure** is evaluated from a mounted filesystem's used
+  percentage. APFS volumes with the same container reference are evaluated as
+  one shared-capacity key. For APFS, container use is derived as shared total
+  minus shared available space, and its percentage is derived against that
+  total; the raw per-volume allocation fields remain unchanged. The alert uses
+  a stable representative that prefers the writable Data mount, role, or name.
+  Other mounts use their stable volume key. The rule emits once
+  at/above the warning threshold, remains deduplicated while the key stays
+  active, and re-arms only after a real observation reaches the lower recovery
+  boundary. The default 90% warning and 88% recovery boundaries provide two
+  percentage points of hysteresis. An unavailable, failed, or missing volume
+  sample is not treated as recovery.
+
+Sampling interval, source, units, and timestamp should travel with each metric
+so the UI can explain it without overstating precision.
+
+## Capability and unavailable states
+
+Each optional probe should fail independently and return an explicit state:
+
+| State | Meaning |
+| --- | --- |
+| `available` | The host exposed the value and collection succeeded |
+| `partial` | Some useful evidence is available, but it does not establish the complete claim |
+| `warming_up` | A rate or state requires another real sample before it is meaningful |
+| `unavailable` | The host, current device, account, or mount did not expose the capability |
+| `error` | Collection was attempted but failed; include a safe diagnostic |
+
+The API should still return useful partial results when an optional probe is
+unavailable. The dashboard should show these states directly instead of using
+zero, an empty chart, or a green health indicator as a substitute for unknown
+data.
+
+## v0.2 request flow
+
+`GET /api/v1/dashboard` gathers the volume, I/O, and quota collectors without
+turning one optional-probe failure into a total response failure. The resulting
+volume snapshot is then evaluated by the capacity alert service. File evidence
+and rapid-growth alerts come from the bounded in-memory evidence service. The
+combined response carries the status, source, message, units, and timestamp
+needed for the dashboard to label each claim honestly.
+
+The individual quota contract is also available at `GET /api/v1/quotas`.
+Quota subprocess calls use the absolute `/usr/bin/quota -uv` invocation,
+argument arrays, a timeout, an accepted-output size cap after capture, and a
+short cache so one-second dashboard polling does not run the command every
+second. The trusted native utility's pipe is still captured before that cap is
+applied; v0.2 does not claim a streaming memory bound. A successful command
+that reports `none` or only rows without nonzero limits is `available` with an
+empty item list. `unavailable` is reserved for a platform or command that
+cannot provide the probe; an empty successful result is not proof that the
+filesystem lacks quota support. NFSv4 remaining-availability fields are exposed
+as reported without deriving utilization from them. The dashboard reconciles
+them against the volume snapshot collected in the same request. The individual
+quota route uses a previously sampled volume snapshot when one exists and does
+not trigger an additional potentially blocking mount-capacity read; before a
+volume sample, a generic `nfs` row therefore remains `unknown`. A normal
+unsupported or empty quota observation remains visible in the quota capability
+without degrading the entire dashboard; an actual quota collector `error`
+contributes to the aggregate health state.
+
+The watched/demo leaf-directory checks and exclusive file creation prevent
+common accidental overwrite and symlink cases. They are not a race-free
+sandbox against a hostile process running as the same account; stronger
+hardening would use directory descriptors and no-follow operations throughout.
+
+## Near-term sequence
+
+1. Validate real APFS capacity, device-level I/O, and FSEvents behavior on the
+   demonstration Mac.
+2. Validate current-user quota parsing and NFS metadata on representative local
+   and remote mounts.
+3. Add sustained-I/O and capacity-runway rules alongside the implemented
+   rapid-growth and capacity-pressure rules.
+4. Preserve recorded fixtures for environments where CI cannot expose a live
+   NFS mount, and detect any future macOS pNFS support before making a
+   negotiated-data-path claim.
