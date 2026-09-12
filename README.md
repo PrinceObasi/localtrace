@@ -11,6 +11,8 @@ telemetry into an operational story: what storage is mounted, how quickly data
 is moving, when watched files grow unexpectedly, and what changed when an alert
 was raised.
 
+![LocalTrace dashboard showing APFS shared-container pressure and live physical-device throughput](docs/images/localtrace-overview.webp)
+
 This project was built for the Tactical Computing Laboratories macOS File
 System Tools challenge at HackWesTX 2026.
 
