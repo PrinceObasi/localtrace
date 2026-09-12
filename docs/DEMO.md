@@ -45,8 +45,10 @@ Run:
 make demo
 ```
 
-Show the throughput chart reacting to the write. Open the resulting rapid-growth
-alert and show the changed `.gguf` path, its size delta, and its file owner.
+Show the throughput chart reacting to the write. When the rapid-growth alert
+fires, a Notification Center banner appears and one line lands in the JSONL
+log (keep `make alert-log` running in a visible terminal). Then open the alert
+and show the changed `.gguf` path, its size delta, and its file owner.
 
 ### 1:06–1:22 — Explain the second alert rule
 
@@ -103,6 +105,10 @@ The complete evidence boundary and safe teardown are recorded in
       labeled partial.
 - [ ] The I/O chart changes during `make demo`.
 - [ ] One rapid-growth alert appears during `make demo`.
+- [ ] The alert produces a Notification Center banner and a new line in
+      `make alert-log`. If macOS prompts to allow notifications from Script
+      Editor/osascript, accept it *before* the demo.
+- [ ] The alerts panel **Delivery** line shows both sinks available.
 - [ ] **What changed?** contains evidence related to that alert.
 - [ ] Current-user quota state is visible; a successful probe with no
       reportable nonzero record is `Available` with an empty list, not a
@@ -129,6 +135,8 @@ The complete evidence boundary and safe teardown are recorded in
 - Do not infer pNFS from NFSv4/NFSv4.1, multiple filesystem locations,
   layout-named counters, or pNFS-looking options.
 - Do not call an empty NFS warning-flag list proof that the server is healthy.
+- Do not call the delivery counter proof that an alert rule works; it counts
+  sink hand-offs, and `0 delivered` before any alert is normal.
 - Do not describe per-owner usage as whole-volume usage; it covers only the
   watched directories.
 - Do not call the owner of a file the process or person that wrote it.

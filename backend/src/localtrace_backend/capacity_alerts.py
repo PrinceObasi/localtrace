@@ -10,6 +10,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 
 from localtrace_backend.models import (
+    Alert,
     CapacityPressureAlert,
     CapabilityStatus,
     Volume,
@@ -83,6 +84,7 @@ class CapacityAlertService:
         now: Callable[[], datetime] = utc_now,
         max_alerts: int = MAX_CAPACITY_ALERTS,
         configuration_message: str | None = None,
+        on_alert: Callable[[Alert], None] | None = None,
     ) -> None:
         if not 0 < threshold_percent <= 100:
             raise ValueError("threshold_percent must be greater than 0 and at most 100")
@@ -103,6 +105,22 @@ class CapacityAlertService:
         self._message = "No volume sample has been evaluated yet."
         self._configuration_message = configuration_message
         self._lock = threading.RLock()
+        self._on_alert = on_alert
+
+    def set_alert_listener(self, listener: Callable[[Alert], None] | None) -> None:
+        """Receive each newly raised alert; the listener must be quick."""
+
+        with self._lock:
+            self._on_alert = listener
+
+    def _notify(self, alert: Alert) -> None:
+        listener = self._on_alert
+        if listener is None:
+            return
+        try:
+            listener(alert)
+        except Exception:
+            return
 
     @classmethod
     def from_environment(cls) -> "CapacityAlertService":
@@ -213,6 +231,7 @@ class CapacityAlertService:
                         alert = self._new_alert(volume)
                         self._alerts.append(alert)
                         emitted.append(alert)
+                        self._notify(alert)
                     self._above_threshold.add(key)
                 elif volume.used_percent <= self.rearm_percent:
                     # A real recovery below the hysteresis boundary re-arms the

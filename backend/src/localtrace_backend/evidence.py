@@ -166,6 +166,7 @@ class FileEvidenceService:
         max_alerts: int = MAX_ALERTS,
         max_tracked_paths: int = MAX_TRACKED_PATHS,
         configuration_message: str | None = None,
+        on_alert: Callable[[Alert], None] | None = None,
     ) -> None:
         if threshold_bytes <= 0:
             raise ValueError("threshold_bytes must be positive")
@@ -201,6 +202,24 @@ class FileEvidenceService:
         self._configuration_message = configuration_message
         self._observer: Any = None
         self._lock = threading.RLock()
+        self._on_alert = on_alert
+
+    def set_alert_listener(self, listener: Callable[[Alert], None] | None) -> None:
+        """Receive each newly raised alert; the listener must be quick."""
+
+        with self._lock:
+            self._on_alert = listener
+
+    def _notify(self, alert: Alert) -> None:
+        listener = self._on_alert
+        if listener is None:
+            return
+        try:
+            listener(alert)
+        except Exception:
+            # Delivery problems are reported by the delivery service itself;
+            # they must never change alert state or break the watcher.
+            return
 
     @staticmethod
     def additional_paths_from_environment(
@@ -520,6 +539,7 @@ class FileEvidenceService:
             related_event_ids=list(state.event_ids),
         )
         self._alerts.append(alert)
+        self._notify(alert)
         return alert
 
     def process(self, kind: FileEventKind, path: str) -> FileEvent:

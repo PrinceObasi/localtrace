@@ -206,6 +206,25 @@ Alert = Annotated[
 ]
 
 
+class AlertSinkStatus(APIModel):
+    name: str
+    status: CapabilityStatus
+    target: str | None = None
+    message: str | None = None
+
+
+class AlertDeliveryStatus(APIModel):
+    """Where new alerts are sent beyond the dashboard, and whether it worked."""
+
+    status: CapabilityStatus
+    source: str
+    message: str | None = None
+    delivered_count: int = Field(ge=0)
+    failed_count: int = Field(ge=0)
+    last_delivered_at: datetime | None = None
+    sinks: list[AlertSinkStatus] = Field(default_factory=list)
+
+
 class AlertsResponse(APIModel):
     sampled_at: datetime
     status: CapabilityStatus
@@ -215,6 +234,7 @@ class AlertsResponse(APIModel):
     watch_targets: list[WatchTarget] = Field(default_factory=list)
     threshold_bytes: int = Field(gt=0)
     capacity_threshold_percent: float = Field(default=90, gt=0, le=100)
+    delivery: AlertDeliveryStatus | None = None
     items: list[Alert] = Field(default_factory=list)
 
 

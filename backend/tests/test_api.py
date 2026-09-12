@@ -454,3 +454,40 @@ def test_usage_route_reports_owner_rollup_after_a_scan(tmp_path) -> None:
     assert owner["share_percent"] == 100
     assert owner["top_files"][0]["path"] == str(models / "weights.gguf")
     assert body["directories"][0]["status"] == "scanned"
+
+
+def test_alerts_response_and_health_report_delivery_state(tmp_path) -> None:
+    from localtrace_backend.notify import AlertDeliveryService, JsonlLogSink
+
+    log_path = tmp_path / "alerts.jsonl"
+    delivery = AlertDeliveryService(sinks=[JsonlLogSink(str(log_path))])
+    evidence = FileEvidenceService(
+        watched_path=str(tmp_path / "watch"),
+        threshold_bytes=4,
+        observer_factory=None,
+    )
+    client = TestClient(
+        create_app(
+            volume_collector=FakeVolumes(),  # type: ignore[arg-type]
+            io_sampler=FakeAvailableIO(),  # type: ignore[arg-type]
+            evidence_service=evidence,
+            quota_collector=FakeQuotas(),  # type: ignore[arg-type]
+            alert_delivery=delivery,
+            prime_io=False,
+            start_watcher=False,
+        )
+    )
+    (tmp_path / "watch").mkdir()
+    target = tmp_path / "watch" / "model.gguf"
+    target.write_bytes(b"12345")
+    evidence.process("created", str(target))
+
+    alerts = client.get("/api/v1/alerts").json()
+    assert alerts["delivery"]["status"] == "available"
+    assert alerts["delivery"]["delivered_count"] == 1
+    assert [sink["name"] for sink in alerts["delivery"]["sinks"]] == ["jsonl_log"]
+    assert alerts["delivery"]["sinks"][0]["target"] == str(log_path)
+    assert log_path.read_text().count("\n") == 1
+
+    health = client.get("/api/v1/health").json()
+    assert health["capabilities"]["alert_delivery"]["status"] == "available"

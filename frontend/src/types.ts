@@ -176,6 +176,23 @@ export interface CapacityPressureAlert extends BaseStorageAlert {
 
 export type StorageAlert = RapidFileGrowthAlert | CapacityPressureAlert;
 
+export interface AlertSinkStatus {
+  name: string;
+  status: CollectorStatus;
+  target: string | null;
+  message: string | null;
+}
+
+export interface AlertDeliveryStatus {
+  status: CollectorStatus;
+  source: string;
+  message: string | null;
+  delivered_count: number;
+  failed_count: number;
+  last_delivered_at: string | null;
+  sinks: AlertSinkStatus[];
+}
+
 export interface AlertsSnapshot {
   sampled_at: string;
   status: CollectorStatus;
@@ -185,6 +202,7 @@ export interface AlertsSnapshot {
   watch_targets: WatchTarget[];
   threshold_bytes: number;
   capacity_threshold_percent: number;
+  delivery: AlertDeliveryStatus | null;
   items: StorageAlert[];
 }
 

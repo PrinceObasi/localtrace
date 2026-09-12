@@ -23,6 +23,12 @@
   USAGE_MAX_SECONDS=...`.
 - The macOS CI smoke check now scans a real temporary directory and verifies
   owner attribution and symlink handling.
+- Every new alert is delivered off the alerting thread to macOS Notification
+  Center (via `osascript`) and to an append-only JSON Lines log at
+  `~/Library/Logs/LocalTrace/alerts.jsonl`. `GET /api/v1/alerts` and the
+  alerts panel report per-sink delivery state and counts; `make run NOTIFY=0`
+  disables banners, `ALERT_LOG_PATH` relocates the log, and `make alert-log`
+  tails it.
 
 ### Accuracy and safety
 
@@ -31,6 +37,9 @@
   error, while a missing explicitly configured path is `partial`.
 - Nested and duplicate targets are skipped as already covered, and
   symbolic-link directories are refused for every target.
+- Notification text is passed to `osascript` as `on run argv` arguments, not
+  interpolated script source; the alert log is opened with `O_NOFOLLOW` and
+  mode `0600`, and a sink failure never drops an alert from the store.
 - Usage scans never follow symbolic links, count hard links once, label
   allocated bytes as an APFS upper bound, and report budget-limited scans as
   `partial` and `truncated` instead of presenting a visited subset as complete.

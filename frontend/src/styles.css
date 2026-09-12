@@ -2498,3 +2498,86 @@ tbody tr:hover {
     justify-content: space-between;
   }
 }
+
+/* Alert delivery status */
+
+.delivery-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  margin: 12px 22px 0;
+  padding: 8px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  font-size: 9px;
+}
+
+.alerts-empty .delivery-line {
+  margin: 14px 0 0;
+  max-width: 560px;
+}
+
+.delivery-label {
+  color: #687580;
+  font-size: 8px;
+  font-weight: 750;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.delivery-sinks {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  min-width: 0;
+  gap: 14px;
+}
+
+.delivery-sink {
+  display: inline-flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.delivery-sink strong {
+  color: var(--muted-strong);
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.delivery-sink code {
+  overflow: hidden;
+  max-width: 320px;
+  color: #94a1ac;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.delivery-sink em {
+  color: #7a8792;
+  font-style: normal;
+}
+
+.delivery-sink-available strong {
+  color: #56d6a0;
+}
+
+.delivery-sink-error strong {
+  color: var(--red);
+}
+
+.delivery-sink-unavailable {
+  opacity: 0.65;
+}
+
+.delivery-count {
+  color: #7a8792;
+  white-space: nowrap;
+}
+
+.delivery-partial,
+.delivery-error {
+  border-color: rgba(244, 125, 132, 0.35);
+}

@@ -24,6 +24,7 @@ from localtrace_backend.collectors.quotas import (
 from localtrace_backend.collectors.volumes import VolumeCollector
 from localtrace_backend.collectors.usage import DiskUsageScanner
 from localtrace_backend.evidence import FileEvidenceService
+from localtrace_backend.notify import AlertDeliveryService
 from localtrace_backend.models import (
     Alert,
     AlertsResponse,
@@ -71,6 +72,7 @@ def create_app(
     quota_collector: QuotaCollector | None = None,
     capacity_alert_service: CapacityAlertService | None = None,
     usage_scanner: DiskUsageScanner | None = None,
+    alert_delivery: AlertDeliveryService | None = None,
     prime_io: bool = True,
     start_watcher: bool = True,
 ) -> FastAPI:
@@ -80,6 +82,12 @@ def create_app(
     quotas_collector = quota_collector or QuotaCollector()
     capacity_alerts = capacity_alert_service or CapacityAlertService.from_environment()
     usage = usage_scanner or DiskUsageScanner.from_environment(evidence.watched_directories)
+    delivery = alert_delivery or AlertDeliveryService.from_environment()
+    # Both alert rules hand new alerts to the same delivery queue.
+    for producer in (evidence, capacity_alerts):
+        setter = getattr(producer, "set_alert_listener", None)
+        if setter is not None:
+            setter(delivery.deliver)
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
@@ -103,12 +111,14 @@ def create_app(
             # The scanner reads the watcher's live target list, so it starts
             # only after the watcher has resolved which directories exist.
             application.state.usage_scanner.start()
+            application.state.alert_delivery.start()
         try:
             yield
         finally:
             if start_watcher:
                 await run_in_threadpool(application.state.usage_scanner.stop)
                 await run_in_threadpool(application.state.evidence_service.stop)
+                await run_in_threadpool(application.state.alert_delivery.stop)
 
     application = FastAPI(
         title="LocalTrace API",
@@ -124,6 +134,7 @@ def create_app(
     application.state.quota_collector = quotas_collector
     application.state.capacity_alert_service = capacity_alerts
     application.state.usage_scanner = usage
+    application.state.alert_delivery = delivery
     application.state.latest_volumes = None
     application.state.latest_io = None
     application.state.latest_quotas = None
@@ -176,6 +187,7 @@ def create_app(
             capacity_threshold_percent=(
                 request.app.state.capacity_alert_service.threshold_percent
             ),
+            delivery=request.app.state.alert_delivery.snapshot(),
             items=items,
         )
 
@@ -311,6 +323,17 @@ def create_app(
                     status=usage.status,
                     source=usage.source,
                     message=usage.message,
+                ),
+                "alert_delivery": CapabilitySummary(
+                    status=alerts.delivery.status,
+                    source=alerts.delivery.source,
+                    message=alerts.delivery.message,
+                )
+                if alerts.delivery
+                else CapabilitySummary(
+                    status=CapabilityStatus.UNAVAILABLE,
+                    source="not-configured",
+                    message="No alert delivery service is configured.",
                 ),
             },
         )

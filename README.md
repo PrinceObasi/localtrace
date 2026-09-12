@@ -59,6 +59,10 @@ System Tools challenge at HackWesTX 2026.
   container crosses the configured percentage, suppresses repeats while it
   stays high, and re-arms only after a real sample reaches the lower recovery
   boundary.
+- Delivers every new alert beyond the dashboard: a macOS Notification Center
+  banner and an append-only JSON Lines log at
+  `~/Library/Logs/LocalTrace/alerts.jsonl`, so an administrator who is not
+  watching the browser still finds out.
 - Correlates a rapid-growth alert with its retained events in a
   **What changed?** view.
 - Serves a versioned local FastAPI API.
@@ -160,6 +164,29 @@ make run WATCH_MODEL_DIRS=0
 Additional directories are observed read-only. Only the demo path is created
 if missing, because `make demo` writes there. Nested or duplicate entries are
 skipped as already covered, and symbolic-link directories are refused.
+
+### Alert delivery
+
+Each alert raised by either rule is queued and delivered off the alerting
+thread to two sinks:
+
+- **Notification Center** through `/usr/bin/osascript`. The alert text is
+  passed as script arguments (`on run argv`), never interpolated into the
+  AppleScript, so a path containing quotes cannot change the script.
+- **JSON Lines log**, one object per alert, appended to
+  `~/Library/Logs/LocalTrace/alerts.jsonl` with mode `0600`. A symbolic link
+  at the log path is refused rather than followed.
+
+```bash
+make run NOTIFY=0                        # log only, no banners
+make run ALERT_LOG_PATH=/Volumes/Ops/localtrace-alerts.jsonl
+make alert-log                           # tail the log in another terminal
+```
+
+Each alert id is delivered at most once per process. A failed sink is
+reported in the alerts panel's **Delivery** line and at
+`GET /api/v1/alerts` under `delivery`; it never removes the alert from the
+dashboard.
 
 ### Per-owner usage
 
@@ -272,6 +299,9 @@ application can only estimate:
   timeout.
 - File-event evidence identifies changed paths and file owners. File ownership
   alone is not presented as proof of the process that wrote the file.
+- Delivery status is about the sinks, not the alert. `0 delivered` with an
+  available log means no alert has been raised yet, not that delivery is
+  broken.
 - Per-owner usage covers only the watched directories, never the whole
   volume. A scan that stops at its file or time budget is `partial` and
   `truncated`; its totals describe the files visited, not the directory. A
@@ -298,6 +328,8 @@ observational LocalTrace policy, not a native quota or write block.
 - Sustained-I/O alert rules
 - Per-owner usage trend history and a "single owner exceeds N% of watched
   storage" alert rule
+- Webhook and email delivery sinks alongside Notification Center and the
+  JSONL log
 - NFS client RPC metrics and detection for any future macOS pNFS support
 - Quota trend history and optional administrator-selected account visibility
 - SMART and filesystem-health enrichment when supported
@@ -315,6 +347,10 @@ observational LocalTrace policy, not a native quota or write block.
   directory, and the workload file is created exclusively with mode
   `0600` rather than overwriting an existing path. These are accident guards,
   not a race-free sandbox against another hostile process under the same user.
+- Alert delivery calls `osascript` with an argument array, a timeout, and the
+  alert text as arguments rather than script source. The alert log is opened
+  `O_APPEND | O_CREAT | O_NOFOLLOW` with mode `0600` under the current
+  account's `~/Library/Logs`.
 - Privileged system-wide tracing is not required for the core demonstration.
 
 ## License

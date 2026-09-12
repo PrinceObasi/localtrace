@@ -18,6 +18,7 @@ The first slice consists of:
 | Evidence service (`backend/`) | Watch the demo directory plus existing local-AI model directories and any configured extras, retain bounded file events, and raise a deterministic rapid-growth alert |
 | Quota collector (`backend/`) | Parse `/usr/bin/quota -uv` for the process's current account, expose rows with nonzero reported quota fields, and label their filesystem-dependent semantics |
 | Usage scanner (`backend/`) | Rescan watched directories in a bounded background thread and roll up bytes, file counts, and largest files by owning uid |
+| Alert delivery (`backend/`) | Queue each newly raised alert and deliver it off-thread to Notification Center and an append-only JSONL log, reporting sink state without ever dropping the alert |
 | Capacity alert service (`backend/`) | Evaluate each real volume snapshot, retain a single alert per threshold crossing, and re-arm only after an observed recovery |
 
 The dashboard requests `GET /api/v1/dashboard`. During development, Vite
@@ -68,6 +69,14 @@ LocalTrace must label what a metric actually proves:
   visited subset as the whole directory. The first snapshot is `warming_up`
   and neither that nor `unavailable` (no watched directory) degrades the
   dashboard; only a failed scan does.
+- **Alert delivery** is a separate capability from alert evaluation. Both
+  rules call one listener when they append a new alert; the listener only
+  enqueues, so evaluation never waits on `osascript` or disk. The worker
+  delivers each alert id once. A sink failure is recorded as `partial`
+  (another sink still works) or `error` (none work) on the delivery status;
+  the alert itself stays in the in-memory store and the dashboard. A
+  non-macOS host or `LOCALTRACE_NOTIFY=0` makes the Notification Center sink
+  `unavailable`, which is not a failure.
 - **Health** is capability-dependent. SMART/NVMe information may not be exposed
   for every Apple or external device. Missing data must never be translated to
   `Healthy`.

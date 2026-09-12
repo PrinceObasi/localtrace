@@ -7,6 +7,7 @@ import {
   titleCase,
 } from "./format";
 import type {
+  AlertDeliveryStatus,
   AlertsSnapshot,
   ConnectionState,
   EventsSnapshot,
@@ -114,6 +115,7 @@ export function AlertsPanel({
           </p>
           {watchedPath && <code>{watchedPath}</code>}
           <WatchTargetList targets={watchTargets} />
+          <DeliveryLine delivery={alerts.delivery} />
         </div>
       ) : (
         <div className="investigation-grid">
@@ -185,6 +187,44 @@ function WatchTargetList({ targets }: { targets: WatchTarget[] }) {
         </li>
       ))}
     </ul>
+  );
+}
+
+const sinkLabel: Record<string, string> = {
+  notification_center: "Notification Center",
+  jsonl_log: "JSONL log",
+};
+
+function DeliveryLine({ delivery }: { delivery: AlertDeliveryStatus | null }) {
+  if (!delivery) return null;
+  return (
+    <div className={`delivery-line delivery-${delivery.status}`} role="status">
+      <span className="delivery-label">Delivery</span>
+      <div className="delivery-sinks">
+        {delivery.sinks.map((sink) => (
+          <span
+            key={sink.name}
+            className={`delivery-sink delivery-sink-${sink.status}`}
+            title={sink.message ?? undefined}
+          >
+            <strong>{sinkLabel[sink.name] ?? titleCase(sink.name)}</strong>
+            {sink.status === "available" ? (
+              sink.name === "jsonl_log" && sink.target ? (
+                <code>{sink.target}</code>
+              ) : (
+                <em>on</em>
+              )
+            ) : (
+              <em>{statusLabel[sink.status]}</em>
+            )}
+          </span>
+        ))}
+      </div>
+      <span className="delivery-count">
+        {delivery.delivered_count} delivered
+        {delivery.failed_count > 0 ? ` · ${delivery.failed_count} failed` : ""}
+      </span>
+    </div>
   );
 }
 

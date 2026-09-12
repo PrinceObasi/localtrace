@@ -1,4 +1,5 @@
 import type {
+  AlertDeliveryStatus,
   ApfsDetails,
   CollectorStatus,
   DashboardSnapshot,
@@ -387,6 +388,35 @@ function normalizeUsage(value: unknown): UsageSnapshot {
   };
 }
 
+function normalizeDelivery(value: unknown): AlertDeliveryStatus | null {
+  if (value === undefined || value === null) return null;
+  const delivery = record(value, "alerts.delivery");
+  if (!Array.isArray(delivery.sinks)) {
+    throw new Error("Collector response has invalid alerts.delivery.sinks");
+  }
+  return {
+    status: status(delivery.status, "alerts.delivery.status"),
+    source: string(delivery.source, "alerts.delivery.source"),
+    message: nullableString(delivery.message, "alerts.delivery.message"),
+    delivered_count: integer(delivery.delivered_count, "alerts.delivery.delivered_count"),
+    failed_count: integer(delivery.failed_count, "alerts.delivery.failed_count"),
+    last_delivered_at: nullableString(
+      delivery.last_delivered_at,
+      "alerts.delivery.last_delivered_at",
+    ),
+    sinks: delivery.sinks.map((item, index) => {
+      const path = `alerts.delivery.sinks[${index}]`;
+      const sink = record(item, path);
+      return {
+        name: string(sink.name, `${path}.name`),
+        status: status(sink.status, `${path}.status`),
+        target: nullableString(sink.target, `${path}.target`),
+        message: nullableString(sink.message, `${path}.message`),
+      };
+    }),
+  };
+}
+
 function normalizeWatchTargets(value: unknown, path: string): WatchTarget[] {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) {
@@ -591,6 +621,7 @@ export function normalizeDashboardSnapshot(value: unknown): DashboardSnapshot {
         "alerts.capacity_threshold_percent",
         true,
       ),
+      delivery: normalizeDelivery(alerts.delivery),
       items: alerts.items.map(normalizeAlert),
     },
   };

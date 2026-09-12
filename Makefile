@@ -16,6 +16,10 @@ DEMO_CHUNK_MB ?= 4
 DEMO_DELAY_MS ?= 100
 DEMO_FSYNC_EVERY_CHUNKS ?= 1
 FILE_GROWTH_ALERT_BYTES ?= 67108864
+# Alert delivery: macOS Notification Center banners (NOTIFY=0 to disable)
+# and an append-only JSON Lines log (default ~/Library/Logs/LocalTrace/alerts.jsonl).
+NOTIFY ?= 1
+ALERT_LOG_PATH ?=
 # Per-owner usage scan of watched directories: rescan cadence and budgets.
 USAGE_SCAN_INTERVAL_SECONDS ?= 60
 USAGE_MAX_FILES ?= 200000
@@ -26,7 +30,7 @@ CAPACITY_REARM_PERCENT ?=
 .DEFAULT_GOAL := help
 
 .PHONY: help setup setup-backend setup-frontend run run-backend run-frontend \
-	test test-tooling test-backend test-frontend demo demo-clean
+	test test-tooling test-backend test-frontend demo demo-clean alert-log
 
 help:
 	@echo "LocalTrace development commands"
@@ -39,6 +43,8 @@ help:
 	@echo "  make run WATCH_PATHS=/Volumes/Models:~/team-models"
 	@echo "  make run WATCH_MODEL_DIRS=0   Watch only the demo path"
 	@echo "  make run USAGE_SCAN_INTERVAL_SECONDS=15   Rescan owner usage more often"
+	@echo "  make run NOTIFY=0             Skip Notification Center banners"
+	@echo "  make alert-log                Tail the append-only JSONL alert log"
 
 setup: setup-backend setup-frontend
 
@@ -59,6 +65,8 @@ run-backend:
 	LOCALTRACE_WATCH_PATHS="$(WATCH_PATHS)" \
 	LOCALTRACE_WATCH_MODEL_DIRS="$(WATCH_MODEL_DIRS)" \
 	LOCALTRACE_FILE_GROWTH_ALERT_BYTES="$(FILE_GROWTH_ALERT_BYTES)" \
+	LOCALTRACE_NOTIFY="$(NOTIFY)" \
+	LOCALTRACE_ALERT_LOG_PATH="$(ALERT_LOG_PATH)" \
 	LOCALTRACE_USAGE_SCAN_INTERVAL_SECONDS="$(USAGE_SCAN_INTERVAL_SECONDS)" \
 	LOCALTRACE_USAGE_MAX_FILES="$(USAGE_MAX_FILES)" \
 	LOCALTRACE_USAGE_MAX_SECONDS="$(USAGE_MAX_SECONDS)" \
@@ -93,3 +101,10 @@ demo:
 
 demo-clean:
 	$(PYTHON) scripts/demo_workload.py --cleanup --target "$(DEMO_TARGET)"
+
+alert-log:
+	@LOG="$(ALERT_LOG_PATH)"; \
+	if [ -z "$$LOG" ]; then LOG="$$HOME/Library/Logs/LocalTrace/alerts.jsonl"; fi; \
+	echo "Following $$LOG (Ctrl-C to stop)"; \
+	touch "$$LOG" 2>/dev/null || mkdir -p "$$(dirname "$$LOG")"; \
+	tail -n 20 -f "$$LOG"
