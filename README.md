@@ -41,6 +41,11 @@ System Tools challenge at HackWesTX 2026.
 - Reports pNFS as `unavailable` on the current macOS NFS client. It preserves
   visible mount options as evidence, but never treats an option, NFSv4, or
   NFSv4.1 as proof of an active pNFS layout.
+- Reports storage-health signals beyond capacity: APFS container ceiling and
+  free space with per-volume roles, FileVault, seal state, and native APFS
+  volume quotas; local Time Machine snapshot counts and ages; and NVMe
+  controller SMART status from `system_profiler` as a second source when
+  `diskutil` reports SMART unsupported for a mount.
 - Scans every watched directory in the background and groups bytes by file
   owner, so an administrator can see who is consuming model storage even on
   APFS, which has no per-user quotas. Symlinks are not followed, hard links
@@ -188,6 +193,26 @@ reported in the alerts panel's **Delivery** line and at
 `GET /api/v1/alerts` under `delivery`; it never removes the alert from the
 dashboard.
 
+### Storage health signals
+
+Three probes refresh in the background (every 60 seconds by default) and are
+served without blocking the dashboard:
+
+| Probe | Utility | What it adds |
+| --- | --- | --- |
+| APFS containers | `diskutil apfs list -plist` | Container ceiling/free, physical stores, per-volume roles, FileVault, lock, seal state, and native APFS `CapacityQuota`/`CapacityReserve` |
+| Local snapshots | `tmutil listlocalsnapshots` | Count, oldest, and newest local Time Machine snapshot per volume group |
+| NVMe SMART | `system_profiler SPNVMeDataType -json` | Controller model, size, TRIM, link, and device-reported SMART status |
+
+```bash
+make run STORAGE_HEALTH_INTERVAL_SECONDS=30
+```
+
+Each probe has its own status, so a missing NVMe controller (external USB
+disks are not covered) or an empty snapshot list does not degrade the other
+two. Serial numbers are discarded. `tmutil` does not report snapshot size, so
+LocalTrace shows none rather than estimating one.
+
 ### Per-owner usage
 
 The same watched directories are rescanned in a background thread (every 60
@@ -247,6 +272,7 @@ the pNFS and quota claims.
 | `GET /api/v1/health` | Service and platform status |
 | `GET /api/v1/volumes` | Mounted-volume inventory and capacity |
 | `GET /api/v1/quotas` | Native current-user quota visibility |
+| `GET /api/v1/storage-health` | APFS containers, local snapshots, and NVMe SMART probes |
 | `GET /api/v1/usage` | Per-owner bytes and largest files across watched directories |
 | `GET /api/v1/io` | Physical-device counters and calculated rates |
 | `GET /api/v1/events` | Recent file evidence from every watched directory, with `watch_targets` |
@@ -271,7 +297,11 @@ application can only estimate:
 - A missing quota command or unsupported platform is reported as
   `unavailable`, never as a zero quota. A successful probe with no reportable
   nonzero current-user record is `available` with an empty list.
-- Missing SMART data is reported as `unavailable`, never `healthy`.
+- Missing SMART data is reported as `unavailable`, never `healthy`. A SMART
+  value from `diskutil` or `system_profiler` is a device self-report, not an
+  independent diagnosis, and both paths map the same words the same way.
+- A native APFS volume quota is a per-volume limit set at volume creation. It
+  is shown as such and is not a per-user quota.
 - A native quota row is shown only when macOS reports a nonzero block or file
   soft/hard limit for the current account. LocalTrace observes those limits; it
   does not enforce them. An empty result does not prove the filesystem lacks
@@ -332,7 +362,8 @@ observational LocalTrace policy, not a native quota or write block.
   JSONL log
 - NFS client RPC metrics and detection for any future macOS pNFS support
 - Quota trend history and optional administrator-selected account visibility
-- SMART and filesystem-health enrichment when supported
+- Read-only `diskutil verifyVolume` runs on demand as a background job
+- SATA and USB device health where macOS exposes it
 - Capacity-runway estimates and retained local history
 
 ## Security and privacy

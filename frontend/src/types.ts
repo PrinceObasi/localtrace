@@ -249,12 +249,75 @@ export interface UsageSnapshot {
   owners: OwnerUsage[];
 }
 
+export interface ProbeStatus {
+  status: CollectorStatus;
+  source: string;
+  message: string | null;
+}
+
+export interface ApfsContainerVolume {
+  device: string;
+  name: string | null;
+  roles: string[];
+  capacity_in_use_bytes: number | null;
+  capacity_quota_bytes: number | null;
+  capacity_reserve_bytes: number | null;
+  filevault: boolean | null;
+  locked: boolean | null;
+  sealed: string | null;
+}
+
+export interface ApfsContainer {
+  reference: string;
+  uuid: string | null;
+  capacity_ceiling_bytes: number;
+  capacity_free_bytes: number;
+  used_percent: number;
+  fusion: boolean | null;
+  physical_stores: string[];
+  volumes: ApfsContainerVolume[];
+}
+
+export interface SnapshotGroup {
+  mount_point: string;
+  volume_group: string | null;
+  count: number;
+  oldest: string | null;
+  newest: string | null;
+  recent_names: string[];
+}
+
+export interface NvmeDevice {
+  name: string;
+  bsd_name: string | null;
+  model: string | null;
+  size_bytes: number | null;
+  health: HealthStatus;
+  trim_support: boolean | null;
+  removable: boolean | null;
+  link_speed: string | null;
+  link_width: string | null;
+}
+
+export interface StorageHealthSnapshot {
+  sampled_at: string;
+  status: CollectorStatus;
+  source: string;
+  message: string | null;
+  refreshed_at: string | null;
+  refresh_interval_seconds: number;
+  apfs: ProbeStatus & { items: ApfsContainer[] };
+  snapshots: ProbeStatus & { items: SnapshotGroup[] };
+  nvme: ProbeStatus & { items: NvmeDevice[] };
+}
+
 export interface DashboardSnapshot {
   sampled_at: string;
   overall_status: CollectorStatus;
   volumes: VolumeSnapshot;
   quotas: QuotasSnapshot;
   usage: UsageSnapshot;
+  storage_health: StorageHealthSnapshot;
   io: IoSnapshot;
   events: EventsSnapshot;
   alerts: AlertsSnapshot;

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise LocalTrace's real macOS volume, quota, I/O, and usage collector paths."""
+"""Exercise LocalTrace's real macOS volume, quota, I/O, usage, and health collector paths."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ import time
 import psutil
 
 from localtrace_backend.collectors.io import DiskIOSampler
+from localtrace_backend.collectors.storage_health import StorageHealthCollector
 from localtrace_backend.collectors.usage import DiskUsageScanner
 from localtrace_backend.collectors.quotas import (
     QuotaCollector,
@@ -131,6 +132,27 @@ def main() -> int:
         if not usage.owners or usage.owners[0].uid != os.getuid():
             raise RuntimeError("usage scan did not attribute the file to the current uid")
 
+    # Storage-health probes must execute the real utilities. A hosted runner
+    # may legitimately have no NVMe controller or no local snapshots; the
+    # probes must classify that honestly rather than fail or fabricate.
+    storage_health = StorageHealthCollector().refresh_now()
+    if storage_health.status == CapabilityStatus.ERROR:
+        raise RuntimeError(
+            "every storage-health probe failed: "
+            f"apfs={storage_health.apfs.message} "
+            f"snapshots={storage_health.snapshots.message} "
+            f"nvme={storage_health.nvme.message}"
+        )
+    if storage_health.apfs.status not in {
+        CapabilityStatus.AVAILABLE,
+        CapabilityStatus.PARTIAL,
+    }:
+        raise RuntimeError(
+            f"diskutil apfs list did not produce containers: {storage_health.apfs.message}"
+        )
+    if storage_health.snapshots.status == CapabilityStatus.ERROR:
+        raise RuntimeError(f"tmutil probe failed: {storage_health.snapshots.message}")
+
     print(
         "macOS collector smoke passed: "
         f"{len(second_volumes.items)} volume(s), "
@@ -138,7 +160,10 @@ def main() -> int:
         f"({len(reconciled_quotas.items)} configured), "
         f"{len(second_io.devices)} whole-device counter(s), "
         f"{second_io.interval_seconds:.3f}s interval, "
-        f"usage owner={usage.owners[0].owner_name or usage.owners[0].uid}"
+        f"usage owner={usage.owners[0].owner_name or usage.owners[0].uid}, "
+        f"apfs containers={len(storage_health.apfs.items)}, "
+        f"snapshots={storage_health.snapshots.status.value}, "
+        f"nvme={storage_health.nvme.status.value}"
     )
     return 0
 

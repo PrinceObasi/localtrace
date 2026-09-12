@@ -1,5 +1,6 @@
 import type {
   AlertDeliveryStatus,
+  ApfsContainer,
   ApfsDetails,
   CollectorStatus,
   DashboardSnapshot,
@@ -12,6 +13,10 @@ import type {
   OwnerUsage,
   QuotaEntry,
   StorageAlert,
+  StorageHealthSnapshot,
+  NvmeDevice,
+  ProbeStatus,
+  SnapshotGroup,
   UsageSnapshot,
   UsageTarget,
   UsageTargetStatus,
@@ -417,6 +422,109 @@ function normalizeDelivery(value: unknown): AlertDeliveryStatus | null {
   };
 }
 
+function normalizeProbe(value: unknown, path: string): ProbeStatus & { items: unknown[] } {
+  const probe = record(value, path);
+  if (!Array.isArray(probe.items)) {
+    throw new Error(`Collector response has invalid ${path}.items`);
+  }
+  return {
+    status: status(probe.status, `${path}.status`),
+    source: string(probe.source, `${path}.source`),
+    message: nullableString(probe.message, `${path}.message`),
+    items: probe.items,
+  };
+}
+
+function normalizeApfsContainer(value: unknown, path: string): ApfsContainer {
+  const input = record(value, path);
+  if (!Array.isArray(input.volumes)) {
+    throw new Error(`Collector response has invalid ${path}.volumes`);
+  }
+  return {
+    reference: string(input.reference, `${path}.reference`),
+    uuid: nullableString(input.uuid, `${path}.uuid`),
+    capacity_ceiling_bytes: integer(input.capacity_ceiling_bytes, `${path}.capacity_ceiling_bytes`),
+    capacity_free_bytes: integer(input.capacity_free_bytes, `${path}.capacity_free_bytes`),
+    used_percent: percentage(input.used_percent, `${path}.used_percent`),
+    fusion: nullableBoolean(input.fusion, `${path}.fusion`),
+    physical_stores: stringList(input.physical_stores, `${path}.physical_stores`),
+    volumes: input.volumes.map((item, index) => {
+      const volumePath = `${path}.volumes[${index}]`;
+      const volume = record(item, volumePath);
+      return {
+        device: string(volume.device, `${volumePath}.device`),
+        name: nullableString(volume.name, `${volumePath}.name`),
+        roles: stringList(volume.roles, `${volumePath}.roles`),
+        capacity_in_use_bytes: nullableInteger(volume.capacity_in_use_bytes, `${volumePath}.capacity_in_use_bytes`),
+        capacity_quota_bytes: nullableInteger(volume.capacity_quota_bytes, `${volumePath}.capacity_quota_bytes`),
+        capacity_reserve_bytes: nullableInteger(volume.capacity_reserve_bytes, `${volumePath}.capacity_reserve_bytes`),
+        filevault: nullableBoolean(volume.filevault, `${volumePath}.filevault`),
+        locked: nullableBoolean(volume.locked, `${volumePath}.locked`),
+        sealed: nullableString(volume.sealed, `${volumePath}.sealed`),
+      };
+    }),
+  };
+}
+
+function normalizeSnapshotGroup(value: unknown, path: string): SnapshotGroup {
+  const input = record(value, path);
+  return {
+    mount_point: string(input.mount_point, `${path}.mount_point`),
+    volume_group: nullableString(input.volume_group, `${path}.volume_group`),
+    count: integer(input.count, `${path}.count`),
+    oldest: nullableString(input.oldest, `${path}.oldest`),
+    newest: nullableString(input.newest, `${path}.newest`),
+    recent_names: stringList(input.recent_names, `${path}.recent_names`),
+  };
+}
+
+function normalizeNvmeDevice(value: unknown, path: string): NvmeDevice {
+  const input = record(value, path);
+  const health = record(input.health, `${path}.health`);
+  return {
+    name: string(input.name, `${path}.name`),
+    bsd_name: nullableString(input.bsd_name, `${path}.bsd_name`),
+    model: nullableString(input.model, `${path}.model`),
+    size_bytes: nullableInteger(input.size_bytes, `${path}.size_bytes`),
+    health: {
+      status: status(health.status, `${path}.health.status`),
+      smart_status: nullableString(health.smart_status, `${path}.health.smart_status`),
+      message: nullableString(health.message, `${path}.health.message`),
+    },
+    trim_support: nullableBoolean(input.trim_support, `${path}.trim_support`),
+    removable: nullableBoolean(input.removable, `${path}.removable`),
+    link_speed: nullableString(input.link_speed, `${path}.link_speed`),
+    link_width: nullableString(input.link_width, `${path}.link_width`),
+  };
+}
+
+function normalizeStorageHealth(value: unknown): StorageHealthSnapshot {
+  const input = record(value, "storage_health");
+  const apfs = normalizeProbe(input.apfs, "storage_health.apfs");
+  const snapshots = normalizeProbe(input.snapshots, "storage_health.snapshots");
+  const nvme = normalizeProbe(input.nvme, "storage_health.nvme");
+  return {
+    sampled_at: string(input.sampled_at, "storage_health.sampled_at"),
+    status: status(input.status, "storage_health.status"),
+    source: string(input.source, "storage_health.source"),
+    message: nullableString(input.message, "storage_health.message"),
+    refreshed_at: nullableString(input.refreshed_at, "storage_health.refreshed_at"),
+    refresh_interval_seconds: number(input.refresh_interval_seconds, "storage_health.refresh_interval_seconds"),
+    apfs: {
+      ...apfs,
+      items: apfs.items.map((item, index) => normalizeApfsContainer(item, `storage_health.apfs.items[${index}]`)),
+    },
+    snapshots: {
+      ...snapshots,
+      items: snapshots.items.map((item, index) => normalizeSnapshotGroup(item, `storage_health.snapshots.items[${index}]`)),
+    },
+    nvme: {
+      ...nvme,
+      items: nvme.items.map((item, index) => normalizeNvmeDevice(item, `storage_health.nvme.items[${index}]`)),
+    },
+  };
+}
+
 function normalizeWatchTargets(value: unknown, path: string): WatchTarget[] {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) {
@@ -581,6 +689,7 @@ export function normalizeDashboardSnapshot(value: unknown): DashboardSnapshot {
       items: quotas.items.map(normalizeQuota),
     },
     usage: normalizeUsage(input.usage),
+    storage_health: normalizeStorageHealth(input.storage_health),
     io: {
       sampled_at: string(io.sampled_at, "io.sampled_at"),
       status: status(io.status, "io.status"),

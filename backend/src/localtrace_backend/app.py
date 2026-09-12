@@ -22,6 +22,7 @@ from localtrace_backend.collectors.quotas import (
     reconcile_quota_semantics,
 )
 from localtrace_backend.collectors.volumes import VolumeCollector
+from localtrace_backend.collectors.storage_health import StorageHealthCollector
 from localtrace_backend.collectors.usage import DiskUsageScanner
 from localtrace_backend.evidence import FileEvidenceService
 from localtrace_backend.notify import AlertDeliveryService
@@ -35,6 +36,7 @@ from localtrace_backend.models import (
     HealthResponse,
     IOResponse,
     QuotasResponse,
+    StorageHealthResponse,
     UsageResponse,
     ServiceStatus,
     VolumesResponse,
@@ -73,6 +75,7 @@ def create_app(
     capacity_alert_service: CapacityAlertService | None = None,
     usage_scanner: DiskUsageScanner | None = None,
     alert_delivery: AlertDeliveryService | None = None,
+    storage_health_collector: StorageHealthCollector | None = None,
     prime_io: bool = True,
     start_watcher: bool = True,
 ) -> FastAPI:
@@ -83,6 +86,21 @@ def create_app(
     capacity_alerts = capacity_alert_service or CapacityAlertService.from_environment()
     usage = usage_scanner or DiskUsageScanner.from_environment(evidence.watched_directories)
     delivery = alert_delivery or AlertDeliveryService.from_environment()
+
+    def local_apfs_mount_points() -> list[str]:
+        latest: VolumesResponse | None = getattr(application.state, "latest_volumes", None)
+        if latest is None:
+            return ["/"]
+        points = [
+            item.mount_point
+            for item in latest.items
+            if item.apfs is not None and not item.remote
+        ]
+        return points or ["/"]
+
+    storage_health = storage_health_collector or StorageHealthCollector.from_environment(
+        local_apfs_mount_points
+    )
     # Both alert rules hand new alerts to the same delivery queue.
     for producer in (evidence, capacity_alerts):
         setter = getattr(producer, "set_alert_listener", None)
@@ -112,10 +130,12 @@ def create_app(
             # only after the watcher has resolved which directories exist.
             application.state.usage_scanner.start()
             application.state.alert_delivery.start()
+            application.state.storage_health_collector.start()
         try:
             yield
         finally:
             if start_watcher:
+                await run_in_threadpool(application.state.storage_health_collector.stop)
                 await run_in_threadpool(application.state.usage_scanner.stop)
                 await run_in_threadpool(application.state.evidence_service.stop)
                 await run_in_threadpool(application.state.alert_delivery.stop)
@@ -135,6 +155,7 @@ def create_app(
     application.state.capacity_alert_service = capacity_alerts
     application.state.usage_scanner = usage
     application.state.alert_delivery = delivery
+    application.state.storage_health_collector = storage_health
     application.state.latest_volumes = None
     application.state.latest_io = None
     application.state.latest_quotas = None
@@ -205,6 +226,7 @@ def create_app(
         events = request.app.state.evidence_service.events_snapshot()
         alerts = combined_alerts(request)
         usage = request.app.state.usage_scanner.snapshot()
+        storage_health = request.app.state.storage_health_collector.snapshot()
         return DashboardResponse(
             sampled_at=datetime.now(timezone.utc),
             overall_status=_overall_status(
@@ -221,6 +243,11 @@ def create_app(
                     # Like quotas, a warming-up or unavailable usage scan is a
                     # normal state and must not degrade the whole dashboard.
                     *((usage.status,) if usage.status == CapabilityStatus.ERROR else ()),
+                    *(
+                        (storage_health.status,)
+                        if storage_health.status == CapabilityStatus.ERROR
+                        else ()
+                    ),
                 )
             ),
             volumes=volumes,
@@ -229,6 +256,7 @@ def create_app(
             alerts=alerts,
             quotas=quotas,
             usage=usage,
+            storage_health=storage_health,
         )
 
     @application.get("/api/v1/health", response_model=HealthResponse)
@@ -239,6 +267,7 @@ def create_app(
         events = request.app.state.evidence_service.events_snapshot(limit=1)
         alerts = combined_alerts(request, limit=1)
         usage = request.app.state.usage_scanner.snapshot()
+        storage_health = request.app.state.storage_health_collector.snapshot()
         volume_summary = (
             CapabilitySummary(
                 status=latest_volumes.status,
@@ -289,6 +318,11 @@ def create_app(
                 else ()
             ),
             *((usage.status,) if usage.status == CapabilityStatus.ERROR else ()),
+            *(
+                (storage_health.status,)
+                if storage_health.status == CapabilityStatus.ERROR
+                else ()
+            ),
         )
         degraded = _overall_status(capability_statuses) != CapabilityStatus.AVAILABLE
         return HealthResponse(
@@ -323,6 +357,11 @@ def create_app(
                     status=usage.status,
                     source=usage.source,
                     message=usage.message,
+                ),
+                "storage_health": CapabilitySummary(
+                    status=storage_health.status,
+                    source=storage_health.source,
+                    message=storage_health.message,
                 ),
                 "alert_delivery": CapabilitySummary(
                     status=alerts.delivery.status,
@@ -359,6 +398,10 @@ def create_app(
             result = reconcile_quota_semantics(result, latest_volumes)
         request.app.state.latest_quotas = result
         return result
+
+    @application.get("/api/v1/storage-health", response_model=StorageHealthResponse)
+    async def storage_health_route(request: Request) -> StorageHealthResponse:
+        return request.app.state.storage_health_collector.snapshot()
 
     @application.get("/api/v1/usage", response_model=UsageResponse)
     async def usage_route(request: Request) -> UsageResponse:

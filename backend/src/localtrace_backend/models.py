@@ -335,6 +335,87 @@ class UsageResponse(APIModel):
     owners: list[OwnerUsage] = Field(default_factory=list)
 
 
+class ProbeStatus(APIModel):
+    status: CapabilityStatus
+    source: str
+    message: str | None = None
+
+
+class APFSContainerVolume(APIModel):
+    device: str
+    name: str | None = None
+    roles: list[str] = Field(default_factory=list)
+    capacity_in_use_bytes: int | None = Field(default=None, ge=0)
+    capacity_quota_bytes: int | None = Field(default=None, ge=0)
+    capacity_reserve_bytes: int | None = Field(default=None, ge=0)
+    filevault: bool | None = None
+    locked: bool | None = None
+    sealed: str | None = None
+
+
+class APFSContainer(APIModel):
+    """One APFS container from ``diskutil apfs list``.
+
+    ``capacity_quota_bytes`` on a member volume is a native APFS limit set at
+    volume creation; it is the only per-volume quota mechanism APFS has and is
+    distinct from per-user quotas.
+    """
+
+    reference: str
+    uuid: str | None = None
+    capacity_ceiling_bytes: int = Field(ge=0)
+    capacity_free_bytes: int = Field(ge=0)
+    used_percent: float = Field(ge=0, le=100)
+    fusion: bool | None = None
+    physical_stores: list[str] = Field(default_factory=list)
+    volumes: list[APFSContainerVolume] = Field(default_factory=list)
+
+
+class APFSContainersProbe(ProbeStatus):
+    items: list[APFSContainer] = Field(default_factory=list)
+
+
+class SnapshotGroup(APIModel):
+    mount_point: str
+    volume_group: str | None = None
+    count: int = Field(ge=0)
+    oldest: datetime | None = None
+    newest: datetime | None = None
+    recent_names: list[str] = Field(default_factory=list)
+
+
+class SnapshotsProbe(ProbeStatus):
+    items: list[SnapshotGroup] = Field(default_factory=list)
+
+
+class NVMeDevice(APIModel):
+    name: str
+    bsd_name: str | None = None
+    model: str | None = None
+    size_bytes: int | None = Field(default=None, ge=0)
+    health: VolumeHealth
+    trim_support: bool | None = None
+    removable: bool | None = None
+    link_speed: str | None = None
+    link_width: str | None = None
+
+
+class NVMeProbe(ProbeStatus):
+    items: list[NVMeDevice] = Field(default_factory=list)
+
+
+class StorageHealthResponse(APIModel):
+    sampled_at: datetime
+    status: CapabilityStatus
+    source: str
+    message: str | None = None
+    refreshed_at: datetime | None = None
+    refresh_interval_seconds: float = Field(gt=0)
+    apfs: APFSContainersProbe
+    snapshots: SnapshotsProbe
+    nvme: NVMeProbe
+
+
 class HealthResponse(APIModel):
     service: str
     version: str
@@ -353,3 +434,4 @@ class DashboardResponse(APIModel):
     alerts: AlertsResponse
     quotas: QuotasResponse
     usage: UsageResponse
+    storage_health: StorageHealthResponse

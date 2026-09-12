@@ -491,3 +491,37 @@ def test_alerts_response_and_health_report_delivery_state(tmp_path) -> None:
 
     health = client.get("/api/v1/health").json()
     assert health["capabilities"]["alert_delivery"]["status"] == "available"
+
+
+def test_storage_health_route_and_dashboard_field(tmp_path) -> None:
+    from localtrace_backend.collectors.storage_health import StorageHealthCollector
+
+    collector = StorageHealthCollector(system_provider=lambda: "Linux")
+    client = TestClient(
+        create_app(
+            volume_collector=FakeVolumes(),  # type: ignore[arg-type]
+            io_sampler=FakeAvailableIO(),  # type: ignore[arg-type]
+            evidence_service=AvailableEvidence(),  # type: ignore[arg-type]
+            quota_collector=FakeQuotas(),  # type: ignore[arg-type]
+            storage_health_collector=collector,
+            prime_io=False,
+            start_watcher=False,
+        )
+    )
+
+    warming = client.get("/api/v1/storage-health").json()
+    assert warming["status"] == "warming_up"
+    assert warming["apfs"]["status"] == "warming_up"
+    assert warming["refreshed_at"] is None
+
+    collector.refresh_now()
+    body = client.get("/api/v1/storage-health").json()
+    assert body["status"] == "unavailable"
+    assert body["nvme"]["message"] == "This probe is macOS-only."
+
+    dashboard = client.get("/api/v1/dashboard").json()
+    assert dashboard["storage_health"]["status"] == "unavailable"
+    assert dashboard["overall_status"] == "available"
+    health = client.get("/api/v1/health").json()
+    assert health["capabilities"]["storage_health"]["status"] == "unavailable"
+    assert health["status"] == "ok"

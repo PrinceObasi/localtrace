@@ -522,9 +522,19 @@ def _health(
             message="No backing-device health source is available for this mount.",
         )
 
-    smart = info.get("SMARTStatus")
-    if isinstance(smart, str) and smart.strip():
-        value = smart.strip()
+    return smart_health(info.get("SMARTStatus"), source="diskutil")
+
+
+def smart_health(raw: object, *, source: str) -> VolumeHealth:
+    """Map a device-reported SMART string to capability state.
+
+    Shared by the per-mount ``diskutil`` path and the NVMe controller path so
+    both label the same words the same way. Missing or unsupported values are
+    ``unavailable``, never ``healthy``.
+    """
+
+    if isinstance(raw, str) and raw.strip():
+        value = raw.strip()
         normalized = value.casefold().replace("_", " ").replace("-", " ")
         if normalized in {
             "unsupported",
@@ -560,7 +570,7 @@ def _health(
         )
     return VolumeHealth(
         status=CapabilityStatus.UNAVAILABLE,
-        message="This device did not expose SMART status through diskutil.",
+        message=f"This device did not expose SMART status through {source}.",
     )
 
 

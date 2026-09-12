@@ -23,6 +23,15 @@
   USAGE_MAX_SECONDS=...`.
 - The macOS CI smoke check now scans a real temporary directory and verifies
   owner attribution and symlink handling.
+- A background storage-health collector adds three probes with independent
+  capability state: APFS containers via `diskutil apfs list` (ceiling, free,
+  physical stores, per-volume roles, FileVault, lock, seal, and native APFS
+  quotas/reserves), local Time Machine snapshots via `tmutil
+  listlocalsnapshots` (count and age only), and NVMe controller SMART via
+  `system_profiler SPNVMeDataType`. Exposed at `GET /api/v1/storage-health`,
+  in the dashboard response, and in a new **Storage health** panel.
+- The SMART string mapping is shared between the per-mount `diskutil` path
+  and the NVMe path so both label the same values the same way.
 - Every new alert is delivered off the alerting thread to macOS Notification
   Center (via `osascript`) and to an append-only JSON Lines log at
   `~/Library/Logs/LocalTrace/alerts.jsonl`. `GET /api/v1/alerts` and the
@@ -37,6 +46,9 @@
   error, while a missing explicitly configured path is `partial`.
 - Nested and duplicate targets are skipped as already covered, and
   symbolic-link directories are refused for every target.
+- Storage-health probes drop serial numbers, never estimate snapshot size,
+  and treat a missing NVMe controller or empty snapshot list as
+  `unavailable`, not as a failure.
 - Notification text is passed to `osascript` as `on run argv` arguments, not
   interpolated script source; the alert log is opened with `O_NOFOLLOW` and
   mode `0600`, and a sink failure never drops an alert from the store.

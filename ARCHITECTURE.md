@@ -18,6 +18,7 @@ The first slice consists of:
 | Evidence service (`backend/`) | Watch the demo directory plus existing local-AI model directories and any configured extras, retain bounded file events, and raise a deterministic rapid-growth alert |
 | Quota collector (`backend/`) | Parse `/usr/bin/quota -uv` for the process's current account, expose rows with nonzero reported quota fields, and label their filesystem-dependent semantics |
 | Usage scanner (`backend/`) | Rescan watched directories in a bounded background thread and roll up bytes, file counts, and largest files by owning uid |
+| Storage health collector (`backend/`) | Refresh APFS container detail, local snapshot counts, and NVMe SMART in a background thread; each probe reports its own capability state |
 | Alert delivery (`backend/`) | Queue each newly raised alert and deliver it off-thread to Notification Center and an append-only JSONL log, reporting sink state without ever dropping the alert |
 | Capacity alert service (`backend/`) | Evaluate each real volume snapshot, retain a single alert per threshold crossing, and re-arm only after an observed recovery |
 
@@ -77,6 +78,16 @@ LocalTrace must label what a metric actually proves:
   the alert itself stays in the in-memory store and the dashboard. A
   non-macOS host or `LOCALTRACE_NOTIFY=0` makes the Notification Center sink
   `unavailable`, which is not a failure.
+- **Storage-health probes** are independent. `diskutil apfs list` supplies
+  container ceiling/free space and per-volume native APFS quotas, reserves,
+  FileVault, lock, and seal state; a `Broken` seal marks the probe `partial`.
+  `tmutil listlocalsnapshots` supplies counts and timestamps only, because
+  it does not report size. `system_profiler SPNVMeDataType` supplies
+  NVMe-only controller metadata and a device-reported SMART value mapped by
+  the same function the per-mount `diskutil` path uses. Serial numbers and
+  partition children are dropped before anything is retained. A single
+  failed probe makes the aggregate `partial`; only three failures make it
+  `error`, and only `error` degrades the dashboard.
 - **Health** is capability-dependent. SMART/NVMe information may not be exposed
   for every Apple or external device. Missing data must never be translated to
   `Healthy`.

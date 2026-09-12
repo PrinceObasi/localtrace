@@ -16,6 +16,9 @@ Open the dashboard and point out:
 - current used and available capacity;
 - physical-device read and write throughput;
 - the current account's native quota state;
+- the **Storage health** panel: the APFS container with its member volumes,
+  any native APFS volume quota, local snapshot count, and the NVMe SMART
+  self-report (say "self-report", not "diagnosis");
 - which local-AI model directories are being watched (the alerts panel lists
   each target as watching or skipped);
 - the **Per-owner usage** panel, which shows who owns the bytes in those
@@ -99,6 +102,9 @@ The complete evidence boundary and safe teardown are recorded in
 - [ ] The alerts panel lists the watched directories; any model directory
       that exists on the demo Mac (for example `~/.ollama/models`) shows
       `Watching`, and missing ones show `Skipped`, not an error.
+- [ ] The storage-health panel has refreshed once; `system_profiler` can take
+      several seconds on first run, so do not open the dashboard for the
+      first time on stage.
 - [ ] The usage panel has completed at least one scan before you present
       (it starts `warming_up`); if you have a large Hugging Face cache, run
       with `USAGE_MAX_SECONDS=10` and say plainly that a truncated scan is
@@ -135,6 +141,9 @@ The complete evidence boundary and safe teardown are recorded in
 - Do not infer pNFS from NFSv4/NFSv4.1, multiple filesystem locations,
   layout-named counters, or pNFS-looking options.
 - Do not call an empty NFS warning-flag list proof that the server is healthy.
+- Do not call a passing SMART value a diagnosis; it is what the device
+  reports about itself.
+- Do not quote a snapshot size; tmutil does not report one.
 - Do not call the delivery counter proof that an alert rule works; it counts
   sink hand-offs, and `0 delivered` before any alert is normal.
 - Do not describe per-owner usage as whole-volume usage; it covers only the

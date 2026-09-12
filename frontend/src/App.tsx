@@ -1,5 +1,6 @@
 import { AlertsPanel } from "./AlertsPanel";
 import { QuotasPanel } from "./QuotasPanel";
+import { StorageHealthPanel } from "./StorageHealthPanel";
 import { UsagePanel } from "./UsagePanel";
 import { ThroughputChart } from "./ThroughputChart";
 import {
@@ -28,7 +29,15 @@ function App() {
     data?.io.status === "available" || data?.io.status === "partial";
   const isStale = connection === "offline" && data !== null;
   const capabilities = data
-    ? [data.volumes, data.io, data.events, data.alerts, data.quotas, data.usage]
+    ? [
+        data.volumes,
+        data.io,
+        data.events,
+        data.alerts,
+        data.quotas,
+        data.usage,
+        data.storage_health,
+      ]
     : [];
   const erroredCapability =
     capabilities.find((capability) => capability.status === "error") ?? null;
@@ -178,6 +187,12 @@ function App() {
             stale={isStale}
           />
 
+          <StorageHealthPanel
+            health={data?.storage_health ?? null}
+            connection={connection}
+            stale={isStale}
+          />
+
           <section className="panel volumes-panel" id="volumes">
             <div className="panel-heading">
               <div>
@@ -280,6 +295,10 @@ function Sidebar({ connection }: { connection: ConnectionState }) {
         <a className="nav-link" href="#quotas">
           <QuotaIcon />
           Quotas
+        </a>
+        <a className="nav-link" href="#health">
+          <HealthIcon />
+          Health
         </a>
         <a className="nav-link" href="#volumes">
           <DriveIcon />
@@ -784,6 +803,15 @@ function UsageIcon() {
       <circle cx="12" cy="8" r="3.5" />
       <path d="M5 20a7 7 0 0 1 14 0" />
       <path d="M17 4h4M19 2v4" />
+    </svg>
+  );
+}
+
+function HealthIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 20s-7-4.5-7-10a4 4 0 0 1 7-2.5A4 4 0 0 1 19 10c0 5.5-7 10-7 10z" />
+      <path d="M8 12h2l1.5-3 2 6 1.5-3h2" />
     </svg>
   );
 }
