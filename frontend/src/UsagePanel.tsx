@@ -48,12 +48,12 @@ export function UsagePanel({ usage, connection, stale }: UsagePanelProps) {
     >
       <div className="panel-heading usage-heading">
         <div>
-          <p className="eyebrow">WHO IS USING THE MODEL STORAGE</p>
+          <p className="eyebrow">WHOSE FILES HOLD THE MODEL STORAGE</p>
           <h2>Per-owner usage in watched directories</h2>
           <p className="panel-description">
-            Bytes grouped by the owner of each file across every watched
-            directory. Ownership is evidence for investigation; it does not
-            prove who wrote the file.
+            Bytes grouped by the owning account of each file across every
+            watched directory. Ownership at scan time is evidence for
+            investigation; it does not prove who performed the writes.
           </p>
         </div>
         <div className="usage-heading-context">
@@ -104,13 +104,31 @@ export function UsagePanel({ usage, connection, stale }: UsagePanelProps) {
             </div>
             <div>
               <span>Owners</span>
-              <strong>{usage.owners.length}</strong>
+              <strong>
+                {usage.owner_count > usage.owners.length
+                  ? `${usage.owners.length} of ${usage.owner_count}`
+                  : usage.owner_count}
+              </strong>
             </div>
           </div>
 
-          {usage.truncated && (
+          {usage.status === "partial" && (
             <div className="usage-notice" role="status">
-              {usage.message}
+              <strong>Partial scan.</strong> {usage.message}
+              {usage.directories.some((target) => target.status !== "scanned") && (
+                <ul>
+                  {usage.directories
+                    .filter((target) => target.status !== "scanned")
+                    .map((target) => (
+                      <li key={target.path}>
+                        <code>{target.path}</code>
+                        {" — "}
+                        {target.status === "error" ? "not read" : "incomplete"}
+                        {target.message ? `: ${target.message}` : ""}
+                      </li>
+                    ))}
+                </ul>
+              )}
             </div>
           )}
 

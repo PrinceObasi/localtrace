@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.3.1 — 2026-09-12
+
+### Fixed
+
+- The alerts panel now shows watched directories and delivery status in an
+  always-visible strip; previously both rendered only when there were zero
+  alerts, so a Mac that starts with a capacity alert never showed them.
+- `GET /api/v1/alerts` now carries `watch_targets`; `combined_alerts()` was
+  building the response without them.
+- `make alert-log` creates the log directory and file itself with mode
+  `0600` and refuses a symbolic link; it previously failed on a clean machine
+  and could leave the file world-readable.
+- Delivery outcomes are tracked per sink. An available sink whose last post
+  failed is reported as `error` with the reason instead of "on", and the
+  alert-level counters distinguish delivered, partially delivered, failed,
+  and queued. `deliver()` only enqueues; delivery starts before the watcher
+  so early alerts are never delivered on the raising thread.
+- "Watching 1 directory" is no longer shown when nothing is being watched.
+- Watch targets are scheduled parents-first regardless of configuration
+  order, so a child listed before its parent cannot produce duplicate events;
+  a configured parent of the demo path is watched and the demo path is
+  marked covered.
+- Usage scans check the time budget on every directory entry, report more
+  than 64 owners as `partial` with the true `owner_count`, and surface
+  per-directory failures in the panel rather than only in tooltips.
+- Usage wording changed from "who is using" to "whose files hold" the
+  storage.
+
 ## 0.3.0 — 2026-09-12
 
 ### Added

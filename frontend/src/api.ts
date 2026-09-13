@@ -388,6 +388,7 @@ function normalizeUsage(value: unknown): UsageSnapshot {
     file_count: integer(usage.file_count, "usage.file_count"),
     total_apparent_bytes: integer(usage.total_apparent_bytes, "usage.total_apparent_bytes"),
     total_allocated_bytes: integer(usage.total_allocated_bytes, "usage.total_allocated_bytes"),
+    owner_count: integer(usage.owner_count ?? 0, "usage.owner_count"),
     directories,
     owners,
   };
@@ -404,7 +405,12 @@ function normalizeDelivery(value: unknown): AlertDeliveryStatus | null {
     source: string(delivery.source, "alerts.delivery.source"),
     message: nullableString(delivery.message, "alerts.delivery.message"),
     delivered_count: integer(delivery.delivered_count, "alerts.delivery.delivered_count"),
+    partially_delivered_count: integer(
+      delivery.partially_delivered_count ?? 0,
+      "alerts.delivery.partially_delivered_count",
+    ),
     failed_count: integer(delivery.failed_count, "alerts.delivery.failed_count"),
+    pending_count: integer(delivery.pending_count ?? 0, "alerts.delivery.pending_count"),
     last_delivered_at: nullableString(
       delivery.last_delivered_at,
       "alerts.delivery.last_delivered_at",
@@ -417,6 +423,9 @@ function normalizeDelivery(value: unknown): AlertDeliveryStatus | null {
         status: status(sink.status, `${path}.status`),
         target: nullableString(sink.target, `${path}.target`),
         message: nullableString(sink.message, `${path}.message`),
+        delivered_count: integer(sink.delivered_count ?? 0, `${path}.delivered_count`),
+        failed_count: integer(sink.failed_count ?? 0, `${path}.failed_count`),
+        last_error: nullableString(sink.last_error, `${path}.last_error`),
       };
     }),
   };

@@ -2513,9 +2513,42 @@ tbody tr:hover {
   font-size: 9px;
 }
 
-.alerts-empty .delivery-line {
-  margin: 14px 0 0;
-  max-width: 560px;
+.alerts-strip {
+  display: grid;
+  gap: 8px;
+  padding: 0 22px 14px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.alerts-strip .watch-target-list {
+  max-width: none;
+  margin: 0;
+}
+
+.alerts-strip .delivery-line {
+  margin: 0;
+}
+
+.delivery-sink-count {
+  color: #687580 !important;
+  font-size: 8px;
+}
+
+.delivery-sink-error-text {
+  color: var(--red) !important;
+}
+
+.usage-notice strong {
+  color: var(--amber);
+}
+
+.usage-notice ul {
+  margin: 6px 0 0;
+  padding-left: 16px;
+}
+
+.usage-notice code {
+  color: #94a1ac;
 }
 
 .delivery-label {

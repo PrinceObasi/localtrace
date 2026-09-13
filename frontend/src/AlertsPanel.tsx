@@ -103,6 +103,13 @@ export function AlertsPanel({
         </div>
       </div>
 
+      {alerts && (
+        <div className="alerts-strip" aria-label="Watch and delivery status">
+          <WatchTargetList targets={watchTargets} />
+          <DeliveryLine delivery={alerts.delivery} />
+        </div>
+      )}
+
       {!available ? (
         <AlertCapabilityState alerts={alerts} connection={connection} />
       ) : sortedAlerts.length === 0 ? (
@@ -114,8 +121,6 @@ export function AlertsPanel({
             {" "}or mounted-volume usage above {alerts.capacity_threshold_percent.toFixed(1)}%.
           </p>
           {watchedPath && <code>{watchedPath}</code>}
-          <WatchTargetList targets={watchTargets} />
-          <DeliveryLine delivery={alerts.delivery} />
         </div>
       ) : (
         <div className="investigation-grid">
@@ -156,17 +161,20 @@ function WatchSummary({
   targets: WatchTarget[];
 }) {
   const watching = targets.filter((target) => target.status === "watching");
-  const count = Math.max(watching.length, 1);
+  const count = watching.length;
   const tooltip =
-    watching.length > 0
+    count > 0
       ? watching.map((target) => `${roleLabel[target.role]}: ${target.path}`).join("\n")
-      : watchedPath;
+      : "No directory is currently being watched.";
+  const primary = watching[0]?.path ?? watchedPath;
   return (
     <div className="watched-path" title={tooltip}>
       <span>
-        Watching {count} director{count === 1 ? "y" : "ies"}
+        {count === 0
+          ? "Watching no directories"
+          : `Watching ${count} director${count === 1 ? "y" : "ies"}`}
       </span>
-      <code>{watching.length > 1 ? `${watchedPath} +${watching.length - 1}` : watchedPath}</code>
+      <code>{count > 1 ? `${primary} +${count - 1}` : count === 1 ? primary : "watcher inactive"}</code>
     </div>
   );
 }
@@ -197,6 +205,8 @@ const sinkLabel: Record<string, string> = {
 
 function DeliveryLine({ delivery }: { delivery: AlertDeliveryStatus | null }) {
   if (!delivery) return null;
+  const attempted =
+    delivery.delivered_count + delivery.partially_delivered_count + delivery.failed_count;
   return (
     <div className={`delivery-line delivery-${delivery.status}`} role="status">
       <span className="delivery-label">Delivery</span>
@@ -205,15 +215,25 @@ function DeliveryLine({ delivery }: { delivery: AlertDeliveryStatus | null }) {
           <span
             key={sink.name}
             className={`delivery-sink delivery-sink-${sink.status}`}
-            title={sink.message ?? undefined}
+            title={sink.last_error ?? sink.message ?? undefined}
           >
             <strong>{sinkLabel[sink.name] ?? titleCase(sink.name)}</strong>
             {sink.status === "available" ? (
-              sink.name === "jsonl_log" && sink.target ? (
-                <code>{sink.target}</code>
-              ) : (
-                <em>on</em>
-              )
+              <>
+                {sink.name === "jsonl_log" && sink.target ? (
+                  <code>{sink.target}</code>
+                ) : (
+                  <em>on</em>
+                )}
+                <em className="delivery-sink-count">
+                  {sink.delivered_count} ok
+                  {sink.failed_count > 0 ? ` · ${sink.failed_count} failed` : ""}
+                </em>
+              </>
+            ) : sink.status === "error" ? (
+              <em className="delivery-sink-error-text">
+                failed{sink.last_error ? `: ${sink.last_error}` : ""}
+              </em>
             ) : (
               <em>{statusLabel[sink.status]}</em>
             )}
@@ -221,8 +241,14 @@ function DeliveryLine({ delivery }: { delivery: AlertDeliveryStatus | null }) {
         ))}
       </div>
       <span className="delivery-count">
-        {delivery.delivered_count} delivered
-        {delivery.failed_count > 0 ? ` · ${delivery.failed_count} failed` : ""}
+        {attempted === 0
+          ? "no alert delivered yet"
+          : `${delivery.delivered_count} delivered` +
+            (delivery.partially_delivered_count > 0
+              ? ` · ${delivery.partially_delivered_count} partial`
+              : "") +
+            (delivery.failed_count > 0 ? ` · ${delivery.failed_count} failed` : "")}
+        {delivery.pending_count > 0 ? ` · ${delivery.pending_count} queued` : ""}
       </span>
     </div>
   );

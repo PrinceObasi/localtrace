@@ -308,7 +308,8 @@ class FileEvidenceService:
             if not path.is_dir():
                 raise NotADirectoryError(f"{self.watched_path} is not a directory")
             observer = self._observer_factory()
-            observer.schedule(_WatchHandler(self), self.watched_path, recursive=True)
+            targets = self._schedule_targets(observer)
+            observer.start()
         except Exception as exc:  # observer implementations expose platform-specific errors
             with self._lock:
                 self._status = CapabilityStatus.ERROR
@@ -323,44 +324,19 @@ class FileEvidenceService:
                 ]
             return
 
-        targets = [
-            WatchTarget(
-                path=self.watched_path,
-                role=WatchTargetRole.DEMO,
-                status=WatchTargetStatus.WATCHING,
-                message="Created if missing; the demo workload writes here.",
-            )
-        ]
-        targets.extend(self._schedule_additional(observer))
-
-        try:
-            observer.start()
-        except Exception as exc:
-            with self._lock:
-                self._status = CapabilityStatus.ERROR
-                self._message = f"File watcher could not start: {_clean_message(exc)}"
-                self._watch_targets = [
-                    WatchTarget(
-                        path=target.path,
-                        role=target.role,
-                        status=WatchTargetStatus.ERROR,
-                        message=_clean_message(exc),
-                    )
-                    if target.status == WatchTargetStatus.WATCHING
-                    else target
-                    for target in targets
-                ]
-            return
-
         watching_paths = [
             target.path for target in targets if target.status == WatchTargetStatus.WATCHING
         ]
+
+        def effectively_watched(target: WatchTarget) -> bool:
+            return target.status == WatchTargetStatus.WATCHING or any(
+                _is_within(target.path, parent) for parent in watching_paths
+            )
+
         configured_problems = [
             target
             for target in targets
-            if target.role == WatchTargetRole.CONFIGURED
-            and target.status != WatchTargetStatus.WATCHING
-            and not any(_is_within(target.path, parent) for parent in watching_paths)
+            if target.role == WatchTargetRole.CONFIGURED and not effectively_watched(target)
         ]
         additional_errors = [
             target
@@ -368,7 +344,7 @@ class FileEvidenceService:
             if target.role != WatchTargetRole.DEMO
             and target.status == WatchTargetStatus.ERROR
         ]
-        watching = sum(1 for target in targets if target.status == WatchTargetStatus.WATCHING)
+        watching = len(watching_paths)
 
         with self._lock:
             self._observer = observer
@@ -396,12 +372,23 @@ class FileEvidenceService:
                     "Owner fields are file-ownership evidence, not writer identity."
                 )
 
-    def _schedule_additional(self, observer: Any) -> list[WatchTarget]:
-        """Schedule read-only targets, skipping duplicates and nested paths."""
+    def _schedule_targets(self, observer: Any) -> list[WatchTarget]:
+        """Schedule every target parents-first so nothing is reported twice.
 
+        The demo path is one candidate among the others. Sorting by depth
+        makes the result independent of configuration order: a child listed
+        before its parent is still skipped as covered, and a configured parent
+        of the demo path is watched while the demo path itself is marked
+        covered. A failure to schedule the demo path is raised to the caller
+        because the workload generator depends on it; any other failure is
+        recorded on that target only.
+        """
+
+        candidates = [(self.watched_path, WatchTargetRole.DEMO), *self._additional_paths]
+        ordered = sorted(candidates, key=lambda item: (item[0].count(os.sep), item[0]))
         results: list[WatchTarget] = []
-        scheduled: list[str] = [self.watched_path]
-        for candidate, role in self._additional_paths:
+        scheduled: list[str] = []
+        for candidate, role in ordered:
             covering = next(
                 (parent for parent in scheduled if _is_within(candidate, parent)), None
             )
@@ -415,30 +402,33 @@ class FileEvidenceService:
                     )
                 )
                 continue
-            path = Path(candidate)
-            if path.is_symlink():
-                results.append(
-                    WatchTarget(
-                        path=candidate,
-                        role=role,
-                        status=WatchTargetStatus.SKIPPED,
-                        message="Refusing to watch a symbolic-link directory.",
+            if role != WatchTargetRole.DEMO:
+                path = Path(candidate)
+                if path.is_symlink():
+                    results.append(
+                        WatchTarget(
+                            path=candidate,
+                            role=role,
+                            status=WatchTargetStatus.SKIPPED,
+                            message="Refusing to watch a symbolic-link directory.",
+                        )
                     )
-                )
-                continue
-            if not path.is_dir():
-                results.append(
-                    WatchTarget(
-                        path=candidate,
-                        role=role,
-                        status=WatchTargetStatus.SKIPPED,
-                        message="Directory does not exist; LocalTrace does not create it.",
+                    continue
+                if not path.is_dir():
+                    results.append(
+                        WatchTarget(
+                            path=candidate,
+                            role=role,
+                            status=WatchTargetStatus.SKIPPED,
+                            message="Directory does not exist; LocalTrace does not create it.",
+                        )
                     )
-                )
-                continue
+                    continue
             try:
                 observer.schedule(_WatchHandler(self), candidate, recursive=True)
             except Exception as exc:
+                if role == WatchTargetRole.DEMO:
+                    raise
                 results.append(
                     WatchTarget(
                         path=candidate,
@@ -454,9 +444,16 @@ class FileEvidenceService:
                     path=candidate,
                     role=role,
                     status=WatchTargetStatus.WATCHING,
-                    message="Read-only observation of an existing directory.",
+                    message=(
+                        "Created if missing; the demo workload writes here."
+                        if role == WatchTargetRole.DEMO
+                        else "Read-only observation of an existing directory."
+                    ),
                 )
             )
+        # Keep the demo path first in the report so the dashboard's primary
+        # path is stable regardless of depth ordering.
+        results.sort(key=lambda target: target.role != WatchTargetRole.DEMO)
         return results
 
     def stop(self) -> None:

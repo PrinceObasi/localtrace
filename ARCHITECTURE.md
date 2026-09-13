@@ -44,8 +44,11 @@ LocalTrace must label what a metric actually proves:
   watched only if it already exists as a real directory. A missing default
   model directory is `skipped` and does not degrade the capability; a missing
   or failed *configured* path makes the capability `partial`, because the
-  administrator asked for it explicitly. Nested or duplicate targets are
-  skipped as covered so one change is not recorded twice.
+  administrator asked for it explicitly. Targets are scheduled parents-first
+  regardless of the order they were configured in, so a nested or duplicate
+  target is skipped as covered and one change is never recorded twice; a
+  configured parent of the demo path is watched and the demo path is marked
+  covered by it.
 - **Quota** must identify its source. A native filesystem or NFS quota is
   distinct from a LocalTrace policy threshold; the latter is an alerting budget
   and does not enforce writes. v0.2 queries only the process's current account.
@@ -67,15 +70,23 @@ LocalTrace must label what a metric actually proves:
   blob count once, and hard links are deduplicated by `(st_dev, st_ino)`
   within a scan. The scanner stops at a file budget or a time budget and
   reports the result as `partial` and `truncated` rather than presenting a
-  visited subset as the whole directory. The first snapshot is `warming_up`
-  and neither that nor `unavailable` (no watched directory) degrades the
-  dashboard; only a failed scan does.
+  visited subset as the whole directory. The clock is checked on every
+  directory entry, but a `stat` blocked inside the kernel (a stale hard NFS
+  mount) cannot be interrupted, so the time budget is a bound on cooperative
+  work, not a hard deadline. More owners than the table shows also makes the
+  result `partial`, with `owner_count` carrying the true number. The first
+  snapshot is `warming_up` and neither that nor `unavailable` (no watched
+  directory) degrades the dashboard; only a failed scan does.
 - **Alert delivery** is a separate capability from alert evaluation. Both
   rules call one listener when they append a new alert; the listener only
-  enqueues, so evaluation never waits on `osascript` or disk. The worker
-  delivers each alert id once. A sink failure is recorded as `partial`
-  (another sink still works) or `error` (none work) on the delivery status;
-  the alert itself stays in the in-memory store and the dashboard. A
+  enqueues, so evaluation never waits on `osascript` or disk. Delivery starts
+  before the watcher, and an alert raised before the worker is running waits
+  in the queue rather than being delivered on the raising thread. The worker
+  delivers each alert id once and records the outcome per sink: an available
+  sink whose last post failed is reported as `error` with the reason, never
+  as "on". The alert-level counters distinguish fully delivered, partially
+  delivered (some sinks failed), failed, and still queued. The alert itself
+  stays in the in-memory store and the dashboard regardless. A
   non-macOS host or `LOCALTRACE_NOTIFY=0` makes the Notification Center sink
   `unavailable`, which is not a failure.
 - **Storage-health probes** are independent. `diskutil apfs list` supplies

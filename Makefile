@@ -108,6 +108,8 @@ demo-clean:
 alert-log:
 	@LOG="$(ALERT_LOG_PATH)"; \
 	if [ -z "$$LOG" ]; then LOG="$$HOME/Library/Logs/LocalTrace/alerts.jsonl"; fi; \
+	if [ -L "$$LOG" ]; then echo "Refusing to follow a symbolic link at $$LOG" >&2; exit 1; fi; \
+	mkdir -p "$$(dirname "$$LOG")"; \
+	if [ ! -e "$$LOG" ]; then ( umask 077 && : > "$$LOG" ); fi; \
 	echo "Following $$LOG (Ctrl-C to stop)"; \
-	touch "$$LOG" 2>/dev/null || mkdir -p "$$(dirname "$$LOG")"; \
 	tail -n 20 -f "$$LOG"

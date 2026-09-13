@@ -212,3 +212,32 @@ def test_background_loop_publishes_a_result_and_stops(tmp_path: Path) -> None:
 
     assert scanner.snapshot().status == CapabilityStatus.AVAILABLE
     assert scanner.snapshot().file_count == 1
+
+
+def test_more_owners_than_the_table_is_partial_with_true_count(tmp_path: Path, monkeypatch) -> None:
+    from localtrace_backend.collectors import usage as usage_module
+
+    folder = tmp_path / "many"
+    folder.mkdir()
+    for index in range(5):
+        (folder / f"{index}.bin").write_bytes(b"x" * (index + 1))
+    real_lstat = os.lstat
+
+    def per_file_uid(entry):
+        result = real_lstat(entry.path)
+        uid = 5000 + int(entry.name.split(".")[0])
+        return os.stat_result(
+            (result.st_mode, result.st_ino, result.st_dev, result.st_nlink, uid,
+             result.st_gid, result.st_size, result.st_atime, result.st_mtime, result.st_ctime)
+        )
+
+    monkeypatch.setattr("localtrace_backend.collectors.usage._entry_stat", per_file_uid)
+    monkeypatch.setattr(usage_module, "MAX_OWNERS", 3)
+
+    result = make_scanner([str(folder)]).scan_now()
+
+    assert result.status == CapabilityStatus.PARTIAL
+    assert result.owner_count == 5
+    assert len(result.owners) == 3
+    assert [owner.uid for owner in result.owners] == [5004, 5003, 5002]
+    assert "top 3 of 5 owners" in (result.message or "")

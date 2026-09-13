@@ -163,7 +163,13 @@ def test_jsonl_log_refuses_symlink_at_log_path(tmp_path: Path) -> None:
         raise AssertionError("expected the symlink to be refused")
 
     assert victim.read_text() == "keep me"
-    assert sink.status().status == CapabilityStatus.ERROR
+    service = AlertDeliveryService(sinks=[sink])
+    service.deliver(make_alert())
+    service.flush()
+    snapshot = service.snapshot()
+    assert snapshot.sinks[0].status == CapabilityStatus.ERROR
+    assert snapshot.sinks[0].failed_count == 1
+    assert snapshot.failed_count == 1
 
 
 def test_default_log_path_is_platform_appropriate() -> None:
@@ -183,28 +189,43 @@ def test_service_delivers_each_alert_once_and_reports_counts() -> None:
     service.deliver(make_alert("a1"))
     service.deliver(make_alert("a1"))
     service.deliver(make_alert("a2"))
+    assert sink.delivered == [], "nothing is delivered on the raising thread"
+    assert service.snapshot().pending_count == 2
+    service.flush()
 
     assert sink.delivered == ["a1", "a2"]
     snapshot = service.snapshot()
     assert snapshot.status == CapabilityStatus.AVAILABLE
     assert snapshot.delivered_count == 2
     assert snapshot.failed_count == 0
+    assert snapshot.pending_count == 0
     assert snapshot.last_delivered_at == NOW
+    assert snapshot.sinks[0].delivered_count == 2
     assert "recording" in (snapshot.message or "")
 
 
 def test_service_records_sink_failure_as_partial_without_losing_other_sinks() -> None:
     good = RecordingSink()
     bad = RecordingSink(fail=True)
+    bad.name = "notification_center"
     service = AlertDeliveryService(sinks=[bad, good], now=lambda: NOW)
 
     service.deliver(make_alert("a1"))
+    service.flush()
 
     assert good.delivered == ["a1"]
     snapshot = service.snapshot()
     assert snapshot.status == CapabilityStatus.PARTIAL
-    assert snapshot.failed_count == 1
+    assert snapshot.delivered_count == 0
+    assert snapshot.partially_delivered_count == 1
+    assert snapshot.failed_count == 0
     assert "sink exploded" in (snapshot.message or "")
+    by_name = {sink.name: sink for sink in snapshot.sinks}
+    assert by_name["notification_center"].status == CapabilityStatus.ERROR
+    assert by_name["notification_center"].failed_count == 1
+    assert by_name["notification_center"].last_error == "sink exploded"
+    assert by_name["recording"].status == CapabilityStatus.AVAILABLE
+    assert by_name["recording"].delivered_count == 1
 
 
 def test_service_with_no_available_sink_is_unavailable() -> None:
@@ -241,6 +262,7 @@ def test_evidence_alert_reaches_delivery(tmp_path: Path) -> None:
     target.write_bytes(b"12345")
 
     evidence.process(FileEventKind.CREATED, str(target))
+    delivery.flush()
 
     alert = evidence.alerts_snapshot().items[0]
     assert sink.delivered == [alert.id]
@@ -271,4 +293,20 @@ def test_capacity_alert_reaches_delivery_and_listener_errors_are_contained() -> 
 
     service.set_alert_listener(delivery.deliver)
     service.evaluate(sample)  # still above threshold: no duplicate
+    delivery.flush()
     assert sink.delivered == []
+
+
+def test_alerts_queued_before_start_are_delivered_by_the_worker() -> None:
+    sink = RecordingSink()
+    service = AlertDeliveryService(sinks=[sink], now=lambda: NOW)
+    service.deliver(make_alert("early"))
+    assert sink.delivered == []
+
+    service.start()
+    try:
+        assert service.flush(timeout=2)
+    finally:
+        service.stop()
+
+    assert sink.delivered == ["early"]

@@ -207,10 +207,16 @@ Alert = Annotated[
 
 
 class AlertSinkStatus(APIModel):
+    """One delivery sink: its static availability overlaid with the outcome
+    of its most recent delivery attempt and running success/failure counts."""
+
     name: str
     status: CapabilityStatus
     target: str | None = None
     message: str | None = None
+    delivered_count: int = Field(default=0, ge=0)
+    failed_count: int = Field(default=0, ge=0)
+    last_error: str | None = None
 
 
 class AlertDeliveryStatus(APIModel):
@@ -220,7 +226,9 @@ class AlertDeliveryStatus(APIModel):
     source: str
     message: str | None = None
     delivered_count: int = Field(ge=0)
+    partially_delivered_count: int = Field(default=0, ge=0)
     failed_count: int = Field(ge=0)
+    pending_count: int = Field(default=0, ge=0)
     last_delivered_at: datetime | None = None
     sinks: list[AlertSinkStatus] = Field(default_factory=list)
 
@@ -331,6 +339,7 @@ class UsageResponse(APIModel):
     file_count: int = Field(ge=0)
     total_apparent_bytes: int = Field(ge=0)
     total_allocated_bytes: int = Field(ge=0)
+    owner_count: int = Field(default=0, ge=0)
     directories: list[UsageTarget] = Field(default_factory=list)
     owners: list[OwnerUsage] = Field(default_factory=list)
 

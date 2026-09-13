@@ -16,7 +16,11 @@ Accuracy rules:
 - File ownership at scan time is evidence for investigation, not proof of
   which process or person wrote the file.
 - A scan that hits its file or time budget is ``partial`` with a message; it
-  never reports a truncated total as a complete one.
+  never reports a truncated total as a complete one. The clock is checked on
+  every directory entry, not only per counted file, but a single ``stat``
+  blocked inside the kernel (a stale hard NFS mount) cannot be interrupted.
+- More owners than the table can show is also ``partial``; ``owner_count``
+  always carries the true number.
 """
 
 from __future__ import annotations
@@ -99,6 +103,16 @@ class _Budget:
         self.files = 0
         self.exhausted_reason: str | None = None
 
+    def expired(self) -> bool:
+        """Check the clock without counting a file; used on every entry."""
+
+        if self.exhausted_reason is not None:
+            return True
+        if self._monotonic() > self._deadline:
+            self.exhausted_reason = "time budget reached"
+            return True
+        return False
+
     def consume(self) -> bool:
         """Record one file; return False once the budget is exhausted."""
 
@@ -106,10 +120,7 @@ class _Budget:
         if self.files > self._max_files:
             self.exhausted_reason = f"file budget of {self._max_files} reached"
             return False
-        if self._monotonic() > self._deadline:
-            self.exhausted_reason = "time budget reached"
-            return False
-        return True
+        return not self.expired()
 
 
 class DiskUsageScanner:
@@ -230,6 +241,7 @@ class DiskUsageScanner:
         started_at: datetime | None,
         duration: float,
         truncated: bool,
+        owner_count: int | None = None,
     ) -> UsageResponse:
         return UsageResponse(
             sampled_at=self._now(),
@@ -243,6 +255,7 @@ class DiskUsageScanner:
             file_count=sum(item.file_count for item in directories),
             total_apparent_bytes=sum(item.apparent_bytes for item in directories),
             total_allocated_bytes=sum(item.allocated_bytes for item in directories),
+            owner_count=len(owners) if owner_count is None else owner_count,
             directories=directories,
             owners=owners,
         )
@@ -294,6 +307,7 @@ class DiskUsageScanner:
                 break
 
         total_apparent = sum(item.apparent_bytes for item in owners.values())
+        owner_count = len(owners)
         owner_rows = [
             OwnerUsage(
                 uid=item.uid,
@@ -325,6 +339,10 @@ class DiskUsageScanner:
             messages.append(f"{len(errored)} director{'y' if len(errored) == 1 else 'ies'} could not be read.")
         elif partial and not truncated:
             messages.append("Some entries could not be read; see directories.")
+        if owner_count > MAX_OWNERS:
+            messages.append(
+                f"Showing the top {MAX_OWNERS} of {owner_count} owners by apparent bytes."
+            )
         if errored and len(errored) == len(targets):
             status = CapabilityStatus.ERROR
         elif messages:
@@ -341,6 +359,7 @@ class DiskUsageScanner:
             message=" ".join(messages) or None,
             directories=targets,
             owners=owner_rows,
+            owner_count=owner_count,
             started_at=started_at,
             duration=self._monotonic() - started,
             truncated=truncated,
@@ -384,13 +403,13 @@ class DiskUsageScanner:
         del root_stat
 
         while stack:
-            if budget.exhausted_reason is not None:
+            if budget.expired():
                 break
             current = stack.pop()
             try:
                 with os.scandir(current) as entries:
                     for entry in entries:
-                        if budget.exhausted_reason is not None:
+                        if budget.expired():
                             break
                         try:
                             if entry.is_symlink():

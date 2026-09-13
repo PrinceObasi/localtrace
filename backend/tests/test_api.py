@@ -481,8 +481,10 @@ def test_alerts_response_and_health_report_delivery_state(tmp_path) -> None:
     target = tmp_path / "watch" / "model.gguf"
     target.write_bytes(b"12345")
     evidence.process("created", str(target))
+    delivery.flush()
 
     alerts = client.get("/api/v1/alerts").json()
+    assert alerts["watch_targets"] == evidence.alerts_snapshot().model_dump(mode="json")["watch_targets"]
     assert alerts["delivery"]["status"] == "available"
     assert alerts["delivery"]["delivered_count"] == 1
     assert [sink["name"] for sink in alerts["delivery"]["sinks"]] == ["jsonl_log"]

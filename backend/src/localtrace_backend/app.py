@@ -120,6 +120,10 @@ def create_app(
 
             startup_tasks.append(prime_disk_io())
         if start_watcher:
+            # Delivery starts first so any alert raised while the watcher or
+            # the first capacity evaluation runs is queued for the worker,
+            # never delivered on the raising thread.
+            application.state.alert_delivery.start()
             startup_tasks.append(
                 run_in_threadpool(application.state.evidence_service.start)
             )
@@ -129,7 +133,6 @@ def create_app(
             # The scanner reads the watcher's live target list, so it starts
             # only after the watcher has resolved which directories exist.
             application.state.usage_scanner.start()
-            application.state.alert_delivery.start()
             application.state.storage_health_collector.start()
         try:
             yield
@@ -204,6 +207,7 @@ def create_app(
             source=f"{evidence_alerts.source}+{request.app.state.capacity_alert_service.source}",
             message=" ".join(dict.fromkeys(messages)) or None,
             watched_path=evidence_alerts.watched_path,
+            watch_targets=list(evidence_alerts.watch_targets),
             threshold_bytes=evidence_alerts.threshold_bytes,
             capacity_threshold_percent=(
                 request.app.state.capacity_alert_service.threshold_percent

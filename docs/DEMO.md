@@ -21,9 +21,9 @@ Open the dashboard and point out:
   self-report (say "self-report", not "diagnosis");
 - which local-AI model directories are being watched (the alerts panel lists
   each target as watching or skipped);
-- the **Per-owner usage** panel, which shows who owns the bytes in those
-  directories and their largest files—this is the answer to "who is filling
-  the model storage?" on a filesystem with no per-user quotas; and
+- the **Per-owner usage** panel, which shows whose files hold the bytes in
+  those directories and their largest files—the per-account view on a
+  filesystem with no per-user quotas (say "owns", not "wrote"); and
 - for an NFS mount, the observed server, export, protocol, mount options, and
   evidence-labeled pNFS status.
 
@@ -114,7 +114,9 @@ The complete evidence boundary and safe teardown are recorded in
 - [ ] The alert produces a Notification Center banner and a new line in
       `make alert-log`. If macOS prompts to allow notifications from Script
       Editor/osascript, accept it *before* the demo.
-- [ ] The alerts panel **Delivery** line shows both sinks available.
+- [ ] The alerts panel's top strip shows the watched directories and the
+      **Delivery** line with both sinks available and their per-sink counts,
+      even while a capacity alert is already listed.
 - [ ] **What changed?** contains evidence related to that alert.
 - [ ] Current-user quota state is visible; a successful probe with no
       reportable nonzero record is `Available` with an empty list, not a

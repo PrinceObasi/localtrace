@@ -181,6 +181,9 @@ export interface AlertSinkStatus {
   status: CollectorStatus;
   target: string | null;
   message: string | null;
+  delivered_count: number;
+  failed_count: number;
+  last_error: string | null;
 }
 
 export interface AlertDeliveryStatus {
@@ -188,7 +191,9 @@ export interface AlertDeliveryStatus {
   source: string;
   message: string | null;
   delivered_count: number;
+  partially_delivered_count: number;
   failed_count: number;
+  pending_count: number;
   last_delivered_at: string | null;
   sinks: AlertSinkStatus[];
 }
@@ -245,6 +250,7 @@ export interface UsageSnapshot {
   file_count: number;
   total_apparent_bytes: number;
   total_allocated_bytes: number;
+  owner_count: number;
   directories: UsageTarget[];
   owners: OwnerUsage[];
 }

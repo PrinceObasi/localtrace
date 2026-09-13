@@ -1,7 +1,7 @@
 # LocalTrace
 
 [![CI](https://github.com/PrinceObasi/localtrace/actions/workflows/ci.yml/badge.svg)](https://github.com/PrinceObasi/localtrace/actions/workflows/ci.yml)
-![Version](https://img.shields.io/badge/version-0.3.0-56d6a0)
+![Version](https://img.shields.io/badge/version-0.3.1-56d6a0)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 **Storage monitoring and alerting for Macs that run local AI.**
@@ -27,9 +27,10 @@ challenge at HackWesTX 2026.
 - **Watches real model storage.** FSEvents-backed observation of every
   local-AI model directory that exists on the Mac, plus any path you add.
   Directories are read-only and never created.
-- **Answers "who is using the space?"** A background scan groups bytes in
-  the watched directories by file owner with each owner's largest files,
-  which is the per-user view APFS cannot give you through quotas.
+- **Answers "whose files hold the space?"** A background scan groups bytes in
+  the watched directories by owning account with each owner's largest files,
+  the per-user view APFS cannot give you through quotas. Ownership is
+  evidence for investigation, not proof of who performed the writes.
 - **Measures throughput in GB/s.** Physical-device read/write rates from
   cumulative kernel counters, charted live.
 - **Alerts and delivers.** Two deterministic rules (rapid file growth,
@@ -119,14 +120,18 @@ remains high, and re-arms only after a real sample reaches the recovery
 boundary. Both rules hand new alerts to a delivery queue; a worker posts a
 Notification Center banner through `osascript` (alert text passed as script
 arguments, never interpolated) and appends a line to the JSONL log (opened
-`O_APPEND | O_CREAT | O_NOFOLLOW`, mode `0600`). A failed sink is reported in
-the alerts panel and never drops the alert.
+`O_APPEND | O_CREAT | O_NOFOLLOW`, mode `0600`). Delivery starts before the
+watcher, so nothing is ever posted on the thread that raised the alert. The
+alerts panel shows each sink's own outcome and counts; a sink whose last post
+failed is labeled failed with the reason, and the alert itself is never
+dropped.
 
 ### Per-owner usage
 
 The watched directories are rescanned in a background thread and rolled up by
 owning uid: bytes, file count, share of the scanned total, and the three
-largest files. Symlinks are not followed (a Hugging Face snapshot link and its
+largest files. The table shows the top 64 owners and says so when there are
+more. Symlinks are not followed (a Hugging Face snapshot link and its
 blob count once), hard links are deduplicated, and allocated bytes are labeled
 an upper bound because APFS clones and sparse files share blocks. A scan that
 hits its file or time budget is `partial` and `truncated`; its totals describe
@@ -215,8 +220,9 @@ estimate. The rules that shape every panel:
   requested options; filehandles, principals, and realms are discarded. A
   stale hard NFS mount can block the `statvfs` capacity read and the
   collector does not claim otherwise.
-- **Delivery.** `0 delivered` with an available log means no alert has fired
-  yet.
+- **Delivery.** Counts are per sink and per alert. "No alert delivered yet"
+  with available sinks means no alert has fired; it is not a delivery
+  failure.
 
 ## Future work
 

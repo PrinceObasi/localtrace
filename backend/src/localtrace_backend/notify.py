@@ -16,7 +16,10 @@ Safety rules:
   the AppleScript source. A path containing quotes cannot change the script.
 - The log file is opened ``O_APPEND | O_CREAT | O_NOFOLLOW`` with mode 0600,
   so an existing symbolic link at the path is refused rather than followed.
-- Each alert id is delivered at most once per process.
+- Each alert id is delivered at most once per process, and only ever on the
+  worker thread; ``deliver`` merely enqueues.
+- Per-sink outcomes are tracked separately, so a sink that is available but
+  failed its last post is reported as ``error`` rather than ``on``.
 """
 
 from __future__ import annotations
@@ -161,16 +164,8 @@ class JsonlLogSink:
     def __init__(self, path: str) -> None:
         self.path = os.path.abspath(os.path.expanduser(path))
         self._lock = threading.Lock()
-        self._last_error: str | None = None
 
     def status(self) -> AlertSinkStatus:
-        if self._last_error:
-            return AlertSinkStatus(
-                name=self.name,
-                status=CapabilityStatus.ERROR,
-                target=self.path,
-                message=self._last_error,
-            )
         return AlertSinkStatus(
             name=self.name,
             status=CapabilityStatus.AVAILABLE,
@@ -185,22 +180,17 @@ class JsonlLogSink:
         }
         line = json.dumps(record, separators=(",", ":"), sort_keys=True) + "\n"
         with self._lock:
+            parent = Path(self.path).parent
+            if parent.is_symlink():
+                raise OSError("refusing a symbolic-link log directory")
+            parent.mkdir(parents=True, exist_ok=True)
+            flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT
+            flags |= getattr(os, "O_NOFOLLOW", 0)
+            fd = os.open(self.path, flags, 0o600)
             try:
-                parent = Path(self.path).parent
-                if parent.is_symlink():
-                    raise OSError("refusing a symbolic-link log directory")
-                parent.mkdir(parents=True, exist_ok=True)
-                flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT
-                flags |= getattr(os, "O_NOFOLLOW", 0)
-                fd = os.open(self.path, flags, 0o600)
-                try:
-                    os.write(fd, line.encode("utf-8"))
-                finally:
-                    os.close(fd)
-            except OSError as exc:
-                self._last_error = f"Alert log write failed: {_clean(exc)}"
-                raise
-            self._last_error = None
+                os.write(fd, line.encode("utf-8"))
+            finally:
+                os.close(fd)
 
 
 class AlertDeliveryService:
@@ -221,9 +211,13 @@ class AlertDeliveryService:
         self._seen: set[str] = set()
         self._delivered: deque[str] = deque(maxlen=max_recent)
         self._delivered_count = 0
+        self._partial_count = 0
         self._failed_count = 0
         self._last_delivered_at: datetime | None = None
         self._last_error: str | None = None
+        self._sink_ok: dict[str, int] = {}
+        self._sink_failed: dict[str, int] = {}
+        self._sink_last_error: dict[str, str | None] = {}
 
     @classmethod
     def from_environment(cls) -> "AlertDeliveryService":
@@ -271,72 +265,134 @@ class AlertDeliveryService:
     # -- delivery ----------------------------------------------------------
 
     def deliver(self, alert: Alert) -> None:
-        """Enqueue one alert. Safe to call from any thread and under locks."""
+        """Enqueue one alert. Safe to call from any thread and under locks.
+
+        Delivery always happens on the worker. If ``start`` has not been
+        called yet the alert waits in the queue; nothing is ever delivered on
+        the thread that raised the alert.
+        """
 
         with self._lock:
             if alert.id in self._seen:
                 return
             self._seen.add(alert.id)
-            running = self._thread is not None
-        if running:
-            self._queue.put(alert)
-        else:
-            self._deliver_now(alert)
+        self._queue.put(alert)
 
     def flush(self, timeout: float = 5.0) -> bool:
-        """Wait until queued deliveries finish; returns False on timeout."""
+        """Wait until queued deliveries finish; returns False on timeout.
 
+        When no worker is running (tests, or a service that was never
+        started) the queue is drained on the calling thread instead.
+        """
+
+        with self._lock:
+            running = self._thread is not None
+        if not running:
+            while True:
+                try:
+                    item = self._queue.get_nowait()
+                except queue.Empty:
+                    return True
+                try:
+                    if item is not None:
+                        self._deliver_now(item)
+                finally:
+                    self._queue.task_done()
         end = time.monotonic() + timeout
         while self._queue.unfinished_tasks and time.monotonic() < end:
             time.sleep(0.01)
         return self._queue.unfinished_tasks == 0
 
     def _deliver_now(self, alert: Alert) -> None:
+        succeeded: list[str] = []
         errors: list[str] = []
         for sink in self._sinks:
+            name = getattr(sink, "name", "sink")
+            if sink.status().status != CapabilityStatus.AVAILABLE:
+                continue  # unavailable sinks are neither successes nor failures
             try:
                 sink.deliver(alert)
             except Exception as exc:  # one sink must not block the others
-                errors.append(f"{getattr(sink, 'name', 'sink')}: {_clean(exc)}")
+                message = _clean(exc)
+                errors.append(f"{name}: {message}")
+                with self._lock:
+                    self._sink_failed[name] = self._sink_failed.get(name, 0) + 1
+                    self._sink_last_error[name] = message
+                continue
+            succeeded.append(name)
+            with self._lock:
+                self._sink_ok[name] = self._sink_ok.get(name, 0) + 1
+                self._sink_last_error[name] = None
         with self._lock:
-            if errors:
-                self._failed_count += 1
-                self._last_error = "; ".join(errors)
-            else:
+            if succeeded and not errors:
                 self._delivered_count += 1
                 self._delivered.append(alert.id)
                 self._last_delivered_at = self._now()
                 self._last_error = None
+            elif succeeded:
+                self._partial_count += 1
+                self._last_delivered_at = self._now()
+                self._last_error = "; ".join(errors)
+            else:
+                self._failed_count += 1
+                self._last_error = "; ".join(errors) or "No sink accepted the alert."
 
     # -- status ------------------------------------------------------------
 
     def snapshot(self) -> AlertDeliveryStatus:
-        sinks = [sink.status() for sink in self._sinks]
         with self._lock:
             delivered = self._delivered_count
+            partial = self._partial_count
             failed = self._failed_count
             last_at = self._last_delivered_at
             last_error = self._last_error
+            sink_ok = dict(self._sink_ok)
+            sink_failed = dict(self._sink_failed)
+            sink_last_error = dict(self._sink_last_error)
+            pending = self._queue.unfinished_tasks
+        sinks: list[AlertSinkStatus] = []
+        for sink in self._sinks:
+            base = sink.status()
+            name = base.name
+            error = sink_last_error.get(name)
+            if base.status == CapabilityStatus.AVAILABLE and error:
+                status = CapabilityStatus.ERROR
+                message = f"Last delivery failed: {error}"
+            else:
+                status = base.status
+                message = base.message
+            sinks.append(
+                AlertSinkStatus(
+                    name=name,
+                    status=status,
+                    target=base.target,
+                    message=message,
+                    delivered_count=sink_ok.get(name, 0),
+                    failed_count=sink_failed.get(name, 0),
+                    last_error=error,
+                )
+            )
         active = [sink for sink in sinks if sink.status == CapabilityStatus.AVAILABLE]
         errored = [sink for sink in sinks if sink.status == CapabilityStatus.ERROR]
         if not active and not errored:
             status = CapabilityStatus.UNAVAILABLE
             message = "No alert delivery sink is available on this host."
-        elif errored or last_error:
+        elif errored:
             status = CapabilityStatus.PARTIAL if active else CapabilityStatus.ERROR
-            message = last_error or "; ".join(
-                f"{sink.name}: {sink.message}" for sink in errored
-            )
+            message = "; ".join(f"{sink.name}: {sink.last_error}" for sink in errored)
         else:
             status = CapabilityStatus.AVAILABLE
             names = ", ".join(sink.name.replace("_", " ") for sink in active)
             message = f"New alerts are delivered to {names}."
+        del last_error
         return AlertDeliveryStatus(
             status=status,
             source=SOURCE,
             message=message,
             delivered_count=delivered,
+            partially_delivered_count=partial,
             failed_count=failed,
+            pending_count=pending,
             last_delivered_at=last_at,
             sinks=sinks,
         )

@@ -244,7 +244,7 @@ def test_nested_and_symlinked_additional_paths_are_skipped(tmp_path: Path) -> No
 
     service.start()
 
-    assert observer.scheduled == [str(demo), str(parent)]
+    assert sorted(observer.scheduled) == sorted([str(demo), str(parent)])
     targets = service.events_snapshot().watch_targets
     child_target = next(t for t in targets if t.path == str(child))
     assert child_target.status == WatchTargetStatus.SKIPPED
@@ -326,3 +326,53 @@ def test_additional_paths_from_environment_respects_flag_and_list() -> None:
         ("/Volumes/Models", WatchTargetRole.CONFIGURED),
         ("~/team-models", WatchTargetRole.CONFIGURED),
     ]
+
+
+def test_watch_dedup_does_not_depend_on_configuration_order(tmp_path: Path) -> None:
+    demo = tmp_path / "demo"
+    parent = tmp_path / "cache"
+    child = parent / "huggingface" / "hub"
+    child.mkdir(parents=True)
+    observer = RecordingObserver()
+    service = FileEvidenceService(
+        watched_path=str(demo),
+        additional_paths=[
+            (str(child), WatchTargetRole.MODEL_DIRECTORY),  # child listed first
+            (str(parent), WatchTargetRole.CONFIGURED),
+        ],
+        observer_factory=lambda: observer,
+        now=Clock(),
+    )
+
+    service.start()
+
+    assert sorted(observer.scheduled) == sorted([str(demo), str(parent)])
+    child_target = targets_by_path(service)[str(child)]
+    assert child_target.status == WatchTargetStatus.SKIPPED
+    assert str(parent) in (child_target.message or "")
+
+
+def test_parent_of_demo_path_is_not_double_watched(tmp_path: Path) -> None:
+    demo = tmp_path / "scratch" / "localtrace-demo"
+    observer = RecordingObserver()
+    service = FileEvidenceService(
+        watched_path=str(demo),
+        additional_paths=[(str(tmp_path / "scratch"), WatchTargetRole.CONFIGURED)],
+        observer_factory=lambda: observer,
+        now=Clock(),
+    )
+
+    service.start()
+
+    # The configured parent is watched; the demo path is covered by it and
+    # not scheduled a second time, so each demo write is reported once.
+    assert observer.scheduled == [str(tmp_path / "scratch")]
+    parent = targets_by_path(service)[str(tmp_path / "scratch")]
+    assert parent.status == WatchTargetStatus.WATCHING
+    demo_target = targets_by_path(service)[str(demo)]
+    assert demo_target.status == WatchTargetStatus.SKIPPED
+    assert str(tmp_path / "scratch") in (demo_target.message or "")
+    assert demo.is_dir()
+    assert service.events_snapshot().watch_targets[0].role == WatchTargetRole.DEMO
+    assert service.events_snapshot().status == CapabilityStatus.AVAILABLE
+    assert service.watched_directories() == [str(tmp_path / "scratch")]
