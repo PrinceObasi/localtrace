@@ -1,5 +1,10 @@
 import type {
   AlertDeliveryStatus,
+  BenchmarkJob,
+  BenchmarkPhase,
+  BenchmarkPhaseResult,
+  BenchmarkStatus,
+  BenchmarksSnapshot,
   ApfsContainer,
   ApfsDetails,
   CollectorStatus,
@@ -27,6 +32,7 @@ import type {
 } from "./types";
 
 const DASHBOARD_ENDPOINT = "/api/v1/dashboard";
+const BENCHMARKS_ENDPOINT = "/api/v1/benchmarks";
 const REQUEST_TIMEOUT_MS = 4_000;
 
 type JsonObject = Record<string, unknown>;
@@ -534,6 +540,68 @@ function normalizeStorageHealth(value: unknown): StorageHealthSnapshot {
   };
 }
 
+const benchmarkStatuses = new Set<BenchmarkStatus>(["running", "completed", "failed"]);
+const benchmarkPhases = new Set<BenchmarkPhase>(["queued", "write", "read", "done"]);
+
+function normalizePhaseResult(value: unknown, path: string): BenchmarkPhaseResult | null {
+  if (value === undefined || value === null) return null;
+  const input = record(value, path);
+  return {
+    bytes: integer(input.bytes, `${path}.bytes`),
+    seconds: number(input.seconds, `${path}.seconds`),
+    flush_seconds: nullableNumber(input.flush_seconds, `${path}.flush_seconds`),
+    bytes_per_second: number(input.bytes_per_second, `${path}.bytes_per_second`),
+    gb_per_second: number(input.gb_per_second, `${path}.gb_per_second`),
+  };
+}
+
+export function normalizeBenchmarkJob(value: unknown, path: string): BenchmarkJob {
+  const input = record(value, path);
+  const jobStatus = string(input.status, `${path}.status`);
+  const phase = string(input.phase, `${path}.phase`);
+  if (!benchmarkStatuses.has(jobStatus as BenchmarkStatus) || !benchmarkPhases.has(phase as BenchmarkPhase)) {
+    throw new Error(`Collector response has invalid ${path}`);
+  }
+  return {
+    id: string(input.id, `${path}.id`),
+    status: jobStatus as BenchmarkStatus,
+    phase: phase as BenchmarkPhase,
+    progress_percent: percentage(input.progress_percent, `${path}.progress_percent`),
+    requested_at: string(input.requested_at, `${path}.requested_at`),
+    started_at: nullableString(input.started_at, `${path}.started_at`),
+    finished_at: nullableString(input.finished_at, `${path}.finished_at`),
+    directory: string(input.directory, `${path}.directory`),
+    mount_point: nullableString(input.mount_point, `${path}.mount_point`),
+    filesystem: nullableString(input.filesystem, `${path}.filesystem`),
+    filesystem_family: nullableString(input.filesystem_family, `${path}.filesystem_family`),
+    remote: nullableBoolean(input.remote, `${path}.remote`),
+    size_bytes: integer(input.size_bytes, `${path}.size_bytes`),
+    block_bytes: integer(input.block_bytes, `${path}.block_bytes`),
+    cache_bypass: boolean(input.cache_bypass, `${path}.cache_bypass`),
+    flush_method: string(input.flush_method, `${path}.flush_method`),
+    write: normalizePhaseResult(input.write, `${path}.write`),
+    read: normalizePhaseResult(input.read, `${path}.read`),
+    message: nullableString(input.message, `${path}.message`),
+  };
+}
+
+function normalizeBenchmarks(value: unknown): BenchmarksSnapshot {
+  const input = record(value, "benchmarks");
+  if (!Array.isArray(input.items)) {
+    throw new Error("Collector response has invalid benchmarks.items");
+  }
+  return {
+    sampled_at: string(input.sampled_at, "benchmarks.sampled_at"),
+    status: status(input.status, "benchmarks.status"),
+    source: string(input.source, "benchmarks.source"),
+    message: nullableString(input.message, "benchmarks.message"),
+    running: boolean(input.running, "benchmarks.running"),
+    max_size_bytes: integer(input.max_size_bytes, "benchmarks.max_size_bytes"),
+    default_size_bytes: integer(input.default_size_bytes, "benchmarks.default_size_bytes"),
+    items: input.items.map((item, index) => normalizeBenchmarkJob(item, `benchmarks.items[${index}]`)),
+  };
+}
+
 function normalizeWatchTargets(value: unknown, path: string): WatchTarget[] {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) {
@@ -699,6 +767,7 @@ export function normalizeDashboardSnapshot(value: unknown): DashboardSnapshot {
     },
     usage: normalizeUsage(input.usage),
     storage_health: normalizeStorageHealth(input.storage_health),
+    benchmarks: normalizeBenchmarks(input.benchmarks),
     io: {
       sampled_at: string(io.sampled_at, "io.sampled_at"),
       status: status(io.status, "io.status"),
@@ -774,4 +843,29 @@ export async function getDashboardSnapshot(
     window.clearTimeout(timeout);
     signal?.removeEventListener("abort", abortFromParent);
   }
+}
+
+export interface BenchmarkRequestBody {
+  mount_point?: string;
+  directory?: string;
+  size_bytes?: number;
+  block_bytes?: number;
+}
+
+/** Start a filesystem throughput run. Throws with the collector's reason on refusal. */
+export async function startBenchmark(body: BenchmarkRequestBody): Promise<BenchmarkJob> {
+  const response = await fetch(BENCHMARKS_ENDPOINT, {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const payload: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    const detail =
+      payload && typeof payload === "object" && "detail" in payload
+        ? String((payload as { detail: unknown }).detail)
+        : `Collector returned HTTP ${response.status}`;
+    throw new Error(detail);
+  }
+  return normalizeBenchmarkJob(payload, "benchmark");
 }

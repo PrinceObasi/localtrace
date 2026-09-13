@@ -16,6 +16,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from localtrace_backend import __version__
 from localtrace_backend.capacity_alerts import CapacityAlertService
+from localtrace_backend.collectors.fs_benchmark import FilesystemBenchmarkService
 from localtrace_backend.collectors.io import DiskIOSampler
 from localtrace_backend.collectors.quotas import (
     QuotaCollector,
@@ -29,6 +30,9 @@ from localtrace_backend.notify import AlertDeliveryService
 from localtrace_backend.models import (
     Alert,
     AlertsResponse,
+    BenchmarkJob,
+    BenchmarkRequest,
+    BenchmarksResponse,
     CapabilityStatus,
     CapabilitySummary,
     DashboardResponse,
@@ -76,6 +80,7 @@ def create_app(
     usage_scanner: DiskUsageScanner | None = None,
     alert_delivery: AlertDeliveryService | None = None,
     storage_health_collector: StorageHealthCollector | None = None,
+    benchmark_service: FilesystemBenchmarkService | None = None,
     prime_io: bool = True,
     start_watcher: bool = True,
 ) -> FastAPI:
@@ -100,6 +105,9 @@ def create_app(
 
     storage_health = storage_health_collector or StorageHealthCollector.from_environment(
         local_apfs_mount_points
+    )
+    benchmarks = benchmark_service or FilesystemBenchmarkService.from_environment(
+        lambda: getattr(application.state, "latest_volumes", None)
     )
     # Both alert rules hand new alerts to the same delivery queue.
     for producer in (evidence, capacity_alerts):
@@ -159,6 +167,7 @@ def create_app(
     application.state.usage_scanner = usage
     application.state.alert_delivery = delivery
     application.state.storage_health_collector = storage_health
+    application.state.benchmark_service = benchmarks
     application.state.latest_volumes = None
     application.state.latest_io = None
     application.state.latest_quotas = None
@@ -174,7 +183,7 @@ def create_app(
         CORSMiddleware,
         allow_origins=list(LOCAL_DEV_ORIGINS),
         allow_credentials=False,
-        allow_methods=["GET"],
+        allow_methods=["GET", "POST"],
         allow_headers=["Accept", "Content-Type"],
         max_age=600,
     )
@@ -231,6 +240,7 @@ def create_app(
         alerts = combined_alerts(request)
         usage = request.app.state.usage_scanner.snapshot()
         storage_health = request.app.state.storage_health_collector.snapshot()
+        benchmarks = request.app.state.benchmark_service.snapshot()
         return DashboardResponse(
             sampled_at=datetime.now(timezone.utc),
             overall_status=_overall_status(
@@ -261,6 +271,7 @@ def create_app(
             quotas=quotas,
             usage=usage,
             storage_health=storage_health,
+            benchmarks=benchmarks,
         )
 
     @application.get("/api/v1/health", response_model=HealthResponse)
@@ -402,6 +413,26 @@ def create_app(
             result = reconcile_quota_semantics(result, latest_volumes)
         request.app.state.latest_quotas = result
         return result
+
+    @application.get("/api/v1/benchmarks", response_model=BenchmarksResponse)
+    async def benchmarks_route(request: Request) -> BenchmarksResponse:
+        return request.app.state.benchmark_service.snapshot()
+
+    @application.post("/api/v1/benchmarks", response_model=BenchmarkJob, status_code=202)
+    async def start_benchmark_route(
+        request: Request, body: BenchmarkRequest
+    ) -> BenchmarkJob:
+        try:
+            return await run_in_threadpool(request.app.state.benchmark_service.start, body)
+        except ValueError as exc:
+            raise HTTPException(status_code=409 if "already running" in str(exc) else 400, detail=str(exc)) from exc
+
+    @application.get("/api/v1/benchmarks/{job_id}", response_model=BenchmarkJob)
+    async def benchmark_route(request: Request, job_id: str) -> BenchmarkJob:
+        job = request.app.state.benchmark_service.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Unknown benchmark job")
+        return job
 
     @application.get("/api/v1/storage-health", response_model=StorageHealthResponse)
     async def storage_health_route(request: Request) -> StorageHealthResponse:

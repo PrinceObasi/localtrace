@@ -20,6 +20,8 @@ FILE_GROWTH_ALERT_BYTES ?= 67108864
 # and an append-only JSON Lines log (default ~/Library/Logs/LocalTrace/alerts.jsonl).
 NOTIFY ?= 1
 ALERT_LOG_PATH ?=
+# Largest temporary file a filesystem throughput run may write (bytes).
+BENCHMARK_MAX_BYTES ?= 2147483648
 # Storage-health probes (APFS containers, local snapshots, NVMe SMART) cadence.
 STORAGE_HEALTH_INTERVAL_SECONDS ?= 60
 # Per-owner usage scan of watched directories: rescan cadence and budgets.
@@ -46,6 +48,7 @@ help:
 	@echo "  make run WATCH_MODEL_DIRS=0   Watch only the demo path"
 	@echo "  make run USAGE_SCAN_INTERVAL_SECONDS=15   Rescan owner usage more often"
 	@echo "  make run NOTIFY=0             Skip Notification Center banners"
+	@echo "  make run BENCHMARK_MAX_BYTES=536870912   Cap throughput runs at 512 MiB"
 	@echo "  make alert-log                Tail the append-only JSONL alert log"
 
 setup: setup-backend setup-frontend
@@ -69,6 +72,7 @@ run-backend:
 	LOCALTRACE_FILE_GROWTH_ALERT_BYTES="$(FILE_GROWTH_ALERT_BYTES)" \
 	LOCALTRACE_NOTIFY="$(NOTIFY)" \
 	LOCALTRACE_ALERT_LOG_PATH="$(ALERT_LOG_PATH)" \
+	LOCALTRACE_BENCHMARK_MAX_BYTES="$(BENCHMARK_MAX_BYTES)" \
 	LOCALTRACE_STORAGE_HEALTH_INTERVAL_SECONDS="$(STORAGE_HEALTH_INTERVAL_SECONDS)" \
 	LOCALTRACE_USAGE_SCAN_INTERVAL_SECONDS="$(USAGE_SCAN_INTERVAL_SECONDS)" \
 	LOCALTRACE_USAGE_MAX_FILES="$(USAGE_MAX_FILES)" \

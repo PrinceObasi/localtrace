@@ -2785,3 +2785,86 @@ tbody tr:hover {
     grid-template-columns: 1fr;
   }
 }
+
+/* Filesystem benchmark panel */
+
+.benchmark-panel {
+  overflow: hidden;
+}
+
+.benchmark-panel.is-stale > :not(.quota-source) {
+  opacity: 0.62;
+}
+
+.benchmark-heading {
+  padding: 22px;
+}
+
+.benchmark-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  padding: 0 22px 16px;
+}
+
+.benchmark-form label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.benchmark-form label span {
+  color: #687580;
+  font-size: 8px;
+  font-weight: 750;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.benchmark-form select {
+  min-width: 180px;
+  padding: 7px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--muted-strong);
+  font: inherit;
+  font-size: 10px;
+}
+
+.benchmark-run {
+  padding: 8px 16px;
+  border: 1px solid rgba(97, 219, 160, 0.4);
+  border-radius: 8px;
+  background: var(--green-soft);
+  color: var(--green);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.benchmark-run:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.benchmark-error {
+  flex-basis: 100%;
+  color: var(--red);
+  font-size: 9px;
+}
+
+.benchmark-table {
+  min-width: 960px;
+}
+
+.benchmark-table small {
+  color: #7a8792;
+  font-size: 8px;
+}
+
+.benchmark-table code {
+  color: #94a1ac;
+}

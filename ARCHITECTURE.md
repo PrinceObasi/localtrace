@@ -18,6 +18,7 @@ The first slice consists of:
 | Evidence service (`backend/`) | Watch the demo directory plus existing local-AI model directories and any configured extras, retain bounded file events, and raise a deterministic rapid-growth alert |
 | Quota collector (`backend/`) | Parse `/usr/bin/quota -uv` for the process's current account, expose rows with nonzero reported quota fields, and label their filesystem-dependent semantics |
 | Usage scanner (`backend/`) | Rescan watched directories in a bounded background thread and roll up bytes, file counts, and largest files by owning uid |
+| Filesystem benchmark (`backend/`) | Run one bounded write/flush/read probe at a time on a chosen mount and keep the last twenty results with phase progress |
 | Storage health collector (`backend/`) | Refresh APFS container detail, local snapshot counts, and NVMe SMART in a background thread; each probe reports its own capability state |
 | Alert delivery (`backend/`) | Queue each newly raised alert and deliver it off-thread to Notification Center and an append-only JSONL log, reporting sink state without ever dropping the alert |
 | Capacity alert service (`backend/`) | Evaluate each real volume snapshot, retain a single alert per threshold crossing, and re-arm only after an observed recovery |
@@ -89,6 +90,12 @@ LocalTrace must label what a metric actually proves:
   stays in the in-memory store and the dashboard regardless. A
   non-macOS host or `LOCALTRACE_NOTIFY=0` makes the Notification Center sink
   `unavailable`, which is not a failure.
+- **Filesystem throughput** is active measurement, kept separate from the
+  passive device counters. A run is attributed to the deepest mount point
+  containing its directory, records whether `F_NOCACHE` and `F_FULLFSYNC`
+  were engaged, and includes flush time in the write figure. It never runs
+  unrequested, never runs concurrently with another, and never leaves its
+  file behind.
 - **Storage-health probes** are independent. `diskutil apfs list` supplies
   container ceiling/free space and per-volume native APFS quotas, reserves,
   FileVault, lock, and seal state; a `Broken` seal marks the probe `partial`.

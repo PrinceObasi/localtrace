@@ -31,8 +31,11 @@ challenge at HackWesTX 2026.
   the watched directories by owning account with each owner's largest files,
   the per-user view APFS cannot give you through quotas. Ownership is
   evidence for investigation, not proof of who performed the writes.
-- **Measures throughput in GB/s.** Physical-device read/write rates from
-  cumulative kernel counters, charted live.
+- **Measures throughput in GB/s, two ways.** Physical-device read/write
+  rates from cumulative kernel counters, charted live; and an on-demand
+  per-mount probe that writes, flushes, and reads back a temporary file on a
+  chosen APFS or NFS mount with the cache bypassed, so the number describes
+  the filesystem rather than the disk under it.
 - **Alerts and delivers.** Two deterministic rules (rapid file growth,
   capacity pressure with hysteresis) post to macOS Notification Center and an
   append-only JSONL log, then link each alert to the file events that caused
@@ -52,7 +55,7 @@ challenge at HackWesTX 2026.
 | Challenge asks for | LocalTrace answer | Where |
 | --- | --- | --- |
 | File-system and backing-block-storage health | Per-mount SMART via `diskutil`; NVMe controller SMART via `system_profiler`; APFS seal/FileVault/lock state; local snapshot counts | Volumes panel, Storage health panel, `/api/v1/storage-health` |
-| I/O performance in GB/s | Per-physical-device read/write rates from cumulative counters, warming-up state, counter-reset handling | Activity chart, `/api/v1/io` |
+| I/O performance in GB/s | Passive: per-physical-device read/write rates from cumulative counters. Active: per-mount write and read GB/s from a bounded probe on the chosen APFS or NFS mount, with `F_FULLFSYNC` and `F_NOCACHE` | Activity chart, Throughput panel, `/api/v1/io`, `/api/v1/benchmarks` |
 | Capacity and per-user quotas | APFS container-aware capacity; native current-user quotas via `quota -uv`; native APFS volume quotas via `diskutil apfs list`; per-owner usage rollup for the per-user view APFS lacks | Overview, Quotas panel, Usage panel, `/api/v1/usage` |
 | Display metrics usefully for administrators | Local React dashboard with explicit capability states on every panel | <http://localhost:5173> |
 | Alert administrators about nefarious users and capacity | Rapid-growth alerts with owner evidence; capacity-pressure alerts with re-arm hysteresis; Notification Center banners and a JSONL log | Alerts panel, `/api/v1/alerts`, `make alert-log` |
@@ -93,6 +96,7 @@ variables.
 | `USAGE_SCAN_INTERVAL_SECONDS` | `60` | Per-owner usage rescan cadence |
 | `USAGE_MAX_FILES` / `USAGE_MAX_SECONDS` | `200000` / `20` | Scan budgets; exceeding either marks the scan `partial` and `truncated` |
 | `STORAGE_HEALTH_INTERVAL_SECONDS` | `60` | APFS / snapshot / NVMe probe cadence |
+| `BENCHMARK_MAX_BYTES` | `2147483648` (2 GiB) | Largest temporary file a throughput run may write |
 
 Watched by default when present:
 
@@ -136,6 +140,26 @@ blob count once), hard links are deduplicated, and allocated bytes are labeled
 an upper bound because APFS clones and sparse files share blocks. A scan that
 hits its file or time budget is `partial` and `truncated`; its totals describe
 the files visited, not the directory.
+
+### Filesystem throughput
+
+macOS counts bytes per physical device, not per APFS volume or NFS mount, so
+a filesystem-specific GB/s figure has to be measured. `POST
+/api/v1/benchmarks` with a `mount_point` (or a `directory`) writes a
+temporary file under `localtrace-benchmark/` on that mount, ends the write
+phase with `F_FULLFSYNC` so the bytes are on stable storage before the clock
+stops, then reads the file back with `F_NOCACHE` so the read phase measures
+the filesystem rather than the buffer cache. Each phase reports bytes,
+seconds, and GB/s; write also reports flush time alone. The file is created
+`O_EXCL | O_NOFOLLOW` with mode `0600` and removed when the run ends. One run
+executes at a time, sizes are capped, read-only mounts and symlinked paths
+are refused, and a run needs 20% headroom in free space. The Throughput
+panel shows progress by phase and keeps the last twenty results.
+
+For `/` on a sealed-system Mac the probe writes under the temp directory and
+is attributed to the mount that actually contains it (the Data volume).
+Running it against an NFS mount is the direct answer to "how fast is this
+shared filesystem from this client."
 
 ### Storage health
 
@@ -188,6 +212,9 @@ accuracy rules.
 | `GET /api/v1/io` | Physical-device counters and calculated rates |
 | `GET /api/v1/quotas` | Native current-user quota records |
 | `GET /api/v1/usage` | Per-owner bytes and largest files across watched directories |
+| `GET /api/v1/benchmarks` | Throughput run history and whether one is running |
+| `POST /api/v1/benchmarks` | Start a per-mount throughput run (`202`, `400` refused, `409` busy) |
+| `GET /api/v1/benchmarks/{id}` | One run with phase progress and results |
 | `GET /api/v1/storage-health` | APFS containers, local snapshots, NVMe SMART |
 | `GET /api/v1/events` | Recent file evidence and `watch_targets` |
 | `GET /api/v1/alerts` | Alerts newest-first with `delivery` status |
@@ -201,7 +228,10 @@ estimate. The rules that shape every panel:
 - **Capacity.** APFS volumes share a container, so per-volume free space is
   not summed. Alerts use container total minus available; the inventory keeps
   the raw per-volume values.
-- **I/O.** Rates describe physical devices, not volumes, users, or files.
+- **I/O.** Passive rates describe physical devices, not volumes, users, or
+  files. Active throughput runs describe one mount, one block size, one
+  moment; a run records whether cache bypass and stable flush were actually
+  engaged, and its write figure includes the flush.
 - **Health.** A SMART value from `diskutil` or `system_profiler` is a device
   self-report mapped identically on both paths. Missing or unsupported is
   `unavailable`, never healthy. An empty NFS warning-flag list is not a
@@ -257,6 +287,9 @@ the same API for administrators who prefer not to keep a browser tab open.
   account in the hackathon build; nothing leaves the Mac.
 - Every subprocess uses an absolute path, an argument array, a timeout, and
   no shell. Alert text reaches `osascript` as arguments, not script source.
+- Throughput runs are the only thing besides the demo that writes: one
+  exclusive `0600` file under a `0700` directory on the mount you chose,
+  size-capped, removed afterwards.
 - Model directories are watched read-only and never created. Symbolic-link
   directories are refused everywhere. The demo file is created exclusively
   with mode `0600`; the alert log is opened with `O_NOFOLLOW` and mode

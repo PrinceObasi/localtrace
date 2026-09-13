@@ -527,3 +527,52 @@ def test_storage_health_route_and_dashboard_field(tmp_path) -> None:
     health = client.get("/api/v1/health").json()
     assert health["capabilities"]["storage_health"]["status"] == "unavailable"
     assert health["status"] == "ok"
+
+
+def test_benchmark_routes_start_poll_and_refuse(tmp_path) -> None:
+    from collections import namedtuple
+
+    from localtrace_backend.collectors.fs_benchmark import FilesystemBenchmarkService
+
+    Usage = namedtuple("Usage", "total used free")
+    service = FilesystemBenchmarkService(
+        volumes_provider=lambda: None,
+        max_size_bytes=8 * 1024 * 1024,
+        system_provider=lambda: "Darwin",
+        disk_usage=lambda _p: Usage(1, 1, 10**12),
+    )
+    client = TestClient(
+        create_app(
+            volume_collector=FakeVolumes(),  # type: ignore[arg-type]
+            io_sampler=FakeAvailableIO(),  # type: ignore[arg-type]
+            evidence_service=AvailableEvidence(),  # type: ignore[arg-type]
+            quota_collector=FakeQuotas(),  # type: ignore[arg-type]
+            benchmark_service=service,
+            prime_io=False,
+            start_watcher=False,
+        )
+    )
+
+    listing = client.get("/api/v1/benchmarks").json()
+    assert listing["items"] == []
+    assert listing["max_size_bytes"] == 8 * 1024 * 1024
+
+    bad = client.post("/api/v1/benchmarks", json={"directory": str(tmp_path / "nope")})
+    assert bad.status_code == 400
+    assert "not a directory" in bad.json()["detail"]
+
+    started = client.post(
+        "/api/v1/benchmarks",
+        json={"directory": str(tmp_path), "size_bytes": 1024 * 1024},
+    )
+    assert started.status_code == 202
+    job_id = started.json()["id"]
+    service.wait()
+
+    job = client.get(f"/api/v1/benchmarks/{job_id}").json()
+    assert job["status"] == "completed"
+    assert job["write"]["gb_per_second"] >= 0
+    assert job["read"]["bytes"] == 1024 * 1024
+    assert client.get("/api/v1/benchmarks/unknown").status_code == 404
+    dashboard = client.get("/api/v1/dashboard").json()
+    assert dashboard["benchmarks"]["items"][0]["id"] == job_id

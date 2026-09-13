@@ -2,6 +2,15 @@
 
 ## 0.3.1 — 2026-09-12
 
+### Added
+
+- Filesystem-specific throughput: `POST /api/v1/benchmarks` runs a bounded
+  sequential write (ending with `F_FULLFSYNC`) and read (`F_NOCACHE`) on a
+  chosen APFS or NFS mount and reports GB/s per phase, flush time, and
+  whether each control was engaged. A **Throughput** panel starts runs and
+  shows phase progress. `BENCHMARK_MAX_BYTES` caps the temporary file. The
+  macOS smoke check runs an 8 MiB probe and requires both controls.
+
 ### Fixed
 
 - The alerts panel now shows watched directories and delivery status in an

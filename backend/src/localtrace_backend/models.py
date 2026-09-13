@@ -425,6 +425,76 @@ class StorageHealthResponse(APIModel):
     nvme: NVMeProbe
 
 
+class BenchmarkStatus(str, Enum):
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class BenchmarkPhase(str, Enum):
+    QUEUED = "queued"
+    WRITE = "write"
+    READ = "read"
+    DONE = "done"
+
+
+class BenchmarkRequest(APIModel):
+    """Where to measure. Give a mount point, or a directory for finer control."""
+
+    mount_point: str | None = None
+    directory: str | None = None
+    size_bytes: int | None = Field(default=None, gt=0)
+    block_bytes: int | None = Field(default=None, gt=0)
+
+
+class BenchmarkPhaseResult(APIModel):
+    bytes: int = Field(ge=0)
+    seconds: float = Field(ge=0)
+    flush_seconds: float | None = Field(default=None, ge=0)
+    bytes_per_second: float = Field(ge=0)
+    gb_per_second: float = Field(ge=0)
+
+
+class BenchmarkJob(APIModel):
+    """One on-demand throughput measurement of a specific mount.
+
+    ``cache_bypass`` and ``flush_method`` record what the run could actually
+    control, so a reader knows whether the read phase touched the buffer
+    cache and whether the write phase ended on stable storage.
+    """
+
+    id: str
+    status: BenchmarkStatus
+    phase: BenchmarkPhase
+    progress_percent: float = Field(ge=0, le=100)
+    requested_at: datetime
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    directory: str
+    mount_point: str | None = None
+    filesystem: str | None = None
+    filesystem_family: str | None = None
+    remote: bool | None = None
+    size_bytes: int = Field(gt=0)
+    block_bytes: int = Field(gt=0)
+    cache_bypass: bool = False
+    flush_method: str
+    write: BenchmarkPhaseResult | None = None
+    read: BenchmarkPhaseResult | None = None
+    message: str | None = None
+
+
+class BenchmarksResponse(APIModel):
+    sampled_at: datetime
+    status: CapabilityStatus
+    source: str
+    message: str | None = None
+    running: bool = False
+    max_size_bytes: int = Field(gt=0)
+    default_size_bytes: int = Field(gt=0)
+    items: list[BenchmarkJob] = Field(default_factory=list)
+
+
 class HealthResponse(APIModel):
     service: str
     version: str
@@ -444,3 +514,4 @@ class DashboardResponse(APIModel):
     quotas: QuotasResponse
     usage: UsageResponse
     storage_health: StorageHealthResponse
+    benchmarks: BenchmarksResponse

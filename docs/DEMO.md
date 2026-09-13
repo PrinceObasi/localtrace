@@ -16,6 +16,10 @@ Open the dashboard and point out:
 - current used and available capacity;
 - physical-device read and write throughput;
 - the current account's native quota state;
+- the **Throughput** panel: run a 256 MiB measurement on the Data volume
+  and, if the loopback NFS export is mounted, one on the NFS mount. Point
+  out that the write figure includes the flush and that the read bypassed
+  the cache;
 - the **Storage health** panel: the APFS container with its member volumes,
   any native APFS volume quota, local snapshot count, and the NVMe SMART
   self-report (say "self-report", not "diagnosis");
@@ -102,6 +106,9 @@ The complete evidence boundary and safe teardown are recorded in
 - [ ] The alerts panel lists the watched directories; any model directory
       that exists on the demo Mac (for example `~/.ollama/models`) shows
       `Watching`, and missing ones show `Skipped`, not an error.
+- [ ] A throughput run has completed once before the demo so judges see a
+      populated table, and free space on the target mount is at least 1.2x
+      the chosen size.
 - [ ] The storage-health panel has refreshed once; `system_profiler` can take
       several seconds on first run, so do not open the dashboard for the
       first time on stage.
@@ -143,6 +150,8 @@ The complete evidence boundary and safe teardown are recorded in
 - Do not infer pNFS from NFSv4/NFSv4.1, multiple filesystem locations,
   layout-named counters, or pNFS-looking options.
 - Do not call an empty NFS warning-flag list proof that the server is healthy.
+- Do not call a throughput run a benchmark suite or compare runs made at
+  different block sizes.
 - Do not call a passing SMART value a diagnosis; it is what the device
   reports about itself.
 - Do not quote a snapshot size; tmutil does not report one.

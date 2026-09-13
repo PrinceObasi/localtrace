@@ -11,6 +11,7 @@ import time
 
 import psutil
 
+from localtrace_backend.collectors.fs_benchmark import FilesystemBenchmarkService
 from localtrace_backend.collectors.io import DiskIOSampler
 from localtrace_backend.collectors.storage_health import StorageHealthCollector
 from localtrace_backend.collectors.usage import DiskUsageScanner
@@ -132,6 +133,25 @@ def main() -> int:
         if not usage.owners or usage.owners[0].uid != os.getuid():
             raise RuntimeError("usage scan did not attribute the file to the current uid")
 
+    # A small throughput run must succeed on the temp volume with the macOS
+    # cache-bypass and stable-flush controls actually engaged.
+    from localtrace_backend.models import BenchmarkRequest, BenchmarkStatus
+
+    bench = FilesystemBenchmarkService(volumes_provider=lambda: volumes)
+    job = bench.start(BenchmarkRequest(mount_point="/", size_bytes=8 * 1024 * 1024))
+    bench.wait(timeout=60)
+    job = bench.get(job.id)
+    if job is None or job.status != BenchmarkStatus.COMPLETED:
+        raise RuntimeError(f"throughput run failed: {job.message if job else 'missing job'}")
+    if not job.cache_bypass or job.flush_method != "F_FULLFSYNC":
+        raise RuntimeError(
+            f"macOS controls not engaged: cache_bypass={job.cache_bypass} flush={job.flush_method}"
+        )
+    if job.write is None or job.read is None or job.write.bytes_per_second <= 0:
+        raise RuntimeError("throughput run produced no rates")
+    if job.mount_point is None:
+        raise RuntimeError("throughput run was not attributed to a mount")
+
     # Storage-health probes must execute the real utilities. A hosted runner
     # may legitimately have no NVMe controller or no local snapshots; the
     # probes must classify that honestly rather than fail or fabricate.
@@ -163,7 +183,9 @@ def main() -> int:
         f"usage owner={usage.owners[0].owner_name or usage.owners[0].uid}, "
         f"apfs containers={len(storage_health.apfs.items)}, "
         f"snapshots={storage_health.snapshots.status.value}, "
-        f"nvme={storage_health.nvme.status.value}"
+        f"nvme={storage_health.nvme.status.value}, "
+        f"throughput on {job.mount_point}: write {job.write.gb_per_second} GB/s "
+        f"read {job.read.gb_per_second} GB/s"
     )
     return 0
 

@@ -1,4 +1,5 @@
 import { AlertsPanel } from "./AlertsPanel";
+import { BenchmarkPanel } from "./BenchmarkPanel";
 import { QuotasPanel } from "./QuotasPanel";
 import { StorageHealthPanel } from "./StorageHealthPanel";
 import { UsagePanel } from "./UsagePanel";
@@ -37,6 +38,7 @@ function App() {
         data.quotas,
         data.usage,
         data.storage_health,
+        data.benchmarks,
       ]
     : [];
   const erroredCapability =
@@ -187,6 +189,13 @@ function App() {
             stale={isStale}
           />
 
+          <BenchmarkPanel
+            benchmarks={data?.benchmarks ?? null}
+            volumes={data?.volumes.items ?? []}
+            connection={connection}
+            stale={isStale}
+          />
+
           <StorageHealthPanel
             health={data?.storage_health ?? null}
             connection={connection}
@@ -295,6 +304,10 @@ function Sidebar({ connection }: { connection: ConnectionState }) {
         <a className="nav-link" href="#quotas">
           <QuotaIcon />
           Quotas
+        </a>
+        <a className="nav-link" href="#benchmark">
+          <GaugeNavIcon />
+          Throughput
         </a>
         <a className="nav-link" href="#health">
           <HealthIcon />
@@ -803,6 +816,16 @@ function UsageIcon() {
       <circle cx="12" cy="8" r="3.5" />
       <path d="M5 20a7 7 0 0 1 14 0" />
       <path d="M17 4h4M19 2v4" />
+    </svg>
+  );
+}
+
+function GaugeNavIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 16a8 8 0 0 1 16 0" />
+      <path d="M12 16l4-6" />
+      <circle cx="12" cy="16" r="1.5" />
     </svg>
   );
 }

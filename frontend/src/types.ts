@@ -317,6 +317,50 @@ export interface StorageHealthSnapshot {
   nvme: ProbeStatus & { items: NvmeDevice[] };
 }
 
+export type BenchmarkStatus = "running" | "completed" | "failed";
+export type BenchmarkPhase = "queued" | "write" | "read" | "done";
+
+export interface BenchmarkPhaseResult {
+  bytes: number;
+  seconds: number;
+  flush_seconds: number | null;
+  bytes_per_second: number;
+  gb_per_second: number;
+}
+
+export interface BenchmarkJob {
+  id: string;
+  status: BenchmarkStatus;
+  phase: BenchmarkPhase;
+  progress_percent: number;
+  requested_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  directory: string;
+  mount_point: string | null;
+  filesystem: string | null;
+  filesystem_family: string | null;
+  remote: boolean | null;
+  size_bytes: number;
+  block_bytes: number;
+  cache_bypass: boolean;
+  flush_method: string;
+  write: BenchmarkPhaseResult | null;
+  read: BenchmarkPhaseResult | null;
+  message: string | null;
+}
+
+export interface BenchmarksSnapshot {
+  sampled_at: string;
+  status: CollectorStatus;
+  source: string;
+  message: string | null;
+  running: boolean;
+  max_size_bytes: number;
+  default_size_bytes: number;
+  items: BenchmarkJob[];
+}
+
 export interface DashboardSnapshot {
   sampled_at: string;
   overall_status: CollectorStatus;
@@ -324,6 +368,7 @@ export interface DashboardSnapshot {
   quotas: QuotasSnapshot;
   usage: UsageSnapshot;
   storage_health: StorageHealthSnapshot;
+  benchmarks: BenchmarksSnapshot;
   io: IoSnapshot;
   events: EventsSnapshot;
   alerts: AlertsSnapshot;
